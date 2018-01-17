@@ -6,10 +6,13 @@ a C++ class implementing to serve as a bridge to the new Interfaces in Firebird 
 - To test what is alread done, execute ./FBConnectTest.sh
 - Requirements are a Firebird 3 Server, gcc and valgrind.
 
-Messages ready so far:
-// INICIA UMA TRANSACAO RO/RW
-int Start (char readwrite)
-int Commit (void)
-int CommitRetaining (void)
+# Messages ready so far:
+ * int Start (char readwrite)
+ * int Commit (void)
+ * int CommitRetaining (void)
 
-Messages in development: Fetch, Select, Execute, ExecuteBind
+# Messages in development:
+ * Fetch
+ * Select
+ * Execute
+ * ExecuteBind
