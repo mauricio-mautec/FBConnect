@@ -3,7 +3,7 @@ a C++ class implementing to serve as a bridge to the new Interfaces in Firebird 
 
 # 2018/01/17 - MAURICIO JUNQUEIRA
 - It is in its initial development.
-- To test what is alread done, execute ./FBConnectTest.sh
+- To test what is already done, execute ./FBConnectTest.sh
 - Requirements are a Firebird 3 Server, gcc and valgrind.
 
 # Messages ready so far:
