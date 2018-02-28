@@ -80,14 +80,11 @@ FBConnect::~FBConnect()
 {
     ThrowStatusWrapper status(this->STATUS);
 
-    if (this->ATTATCHMENT) {
-        this->ATTATCHMENT->detach(&status);
-        this->ATTATCHMENT->release(); }
-
-    if (this->PROVIDER) this->PROVIDER->release();
-    if (this->TPB_RO)   this->TPB_RO->dispose();
-    if (this->TPB_RW)   this->TPB_RW->dispose();
-    if (this->STATUS)   this->STATUS->dispose();
+    if (this->ATTATCHMENT) this->ATTATCHMENT->release();
+    if (this->PROVIDER)    this->PROVIDER->release();
+    if (this->TPB_RO)      this->TPB_RO->dispose();
+    if (this->TPB_RW)      this->TPB_RW->dispose();
+    if (this->STATUS)      this->STATUS->dispose();
 
     this->TPB_RO      = NULL; 
     this->TPB_RW      = NULL;
@@ -165,17 +162,48 @@ int FBConnect::Fetch  (char *dados)
     return 0;
 }
 
-int FBConnect::Select (char *stmt)
+/* PRIVATE: PREPARE
+** PREPARA CAMPOS DE RETORNO
+** DOS DADOS SOLICITADOS NO STATEMENT
+*/
+int FBConnect::Prepare (const char *stmt)
+{
+
+
+    return 0;
+}
+
+/* PUBLIC : SELECT
+** SELECIONAR VARIAS LINHAS DE DADOS
+*/
+int FBConnect::Select (const char *stmt)
+{
+    // 0. VERIFICA STATMENT
+    // {
+    if (strlen (stmt) < 15) { 
+        strcpy (this->ErrorMsg, "FBConnect::Select: VERIFY STATMENT LESS THAN 15 CHARS");
+        return -1; }
+    // }
+
+    // 1. VERIFICA STATUS DA TRANSACAO E PREPARA STATEMENT
+    // {
+    // Iniciar automaticamente uma transacao
+    if (! this->InTrans && this->Start (FBREAD)) return -1;
+  
+    // Prepara a transacao
+    if (this->Prepare (stmt)) {
+        strcpy (this->ErrorMsg, "FBConnect::Select:Prepare: UNABLE TO SETUP STATEMENT");
+        return -1; }
+
+    return 0;
+}
+
+int FBConnect::Execute (const char *stmt)
 {
     return 0;
 }
 
-int FBConnect::Execute (char *stmt)
-{
-    return 0;
-}
-
-int FBConnect::ExecuteBind (char *stmt, char **dados, int dimensao)
+int FBConnect::ExecuteBind (const char *stmt, char **dados, int dimensao)
 {
     return 0;
 }

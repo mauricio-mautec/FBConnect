@@ -1,7 +1,14 @@
 #include "FBConnect.h"
+#define FB25PATH "rondon:/srv/mautec/database/teste.fdb"
+#define FB25PASS "masterke"
+#define FB25USER "SYSDBA"
+#define FB30PATH "ada:BSOICA3"
+#define FB30PASS "MasterKey0000000"
+#define FB30USER "SYSDBA"
+
 int t001_Conexao25(void) {
     printf ("\n--------------------------\n001_Conexao25  TEST\nConectando no banco VERSAO 2.5\n");
-    FBConnect *db = new FBConnect ("rondon:TESTE", "SYSDBA", "aeShoo0a");
+    FBConnect *db = new FBConnect (FB25PATH, FB25USER, FB25PASS);
     if (! db->Conectado) {
         printf ("ERRO CONEXAO %s\n", db->ErrorMsg);
         delete(db);
@@ -15,7 +22,7 @@ int t001_Conexao25(void) {
 
 int t002_ConexaoOK(void) {
     printf ("\n--------------------------\n002_ConexaoOK  TEST\nConectando no banco\n");
-    FBConnect *db = new FBConnect ("ada:BSOICA3", "SYSDBA", "aeShoo0amaike7aF");
+    FBConnect *db = new FBConnect (FB30PATH, FB30USER, FB30PASS);
 
     if (! db->Conectado) {
         printf ("ERRO CONEXAO %s\n", db->ErrorMsg);
@@ -33,9 +40,7 @@ int t002_ConexaoOK(void) {
 
 int t003_ConexaoNOK (void) {
     printf ("\n--------------------------\n003_ConexaoNOK TEST\nConectando no banco com senha incorreta\n");
-    FBConnect *db = NULL;
-    
-    db = new FBConnect ("ada:BSOICA3", "SYSDBA", "aeshoo0amaike7aF");
+    FBConnect *db = new FBConnect (FB30PATH, FB30USER, "thisisawrongpass");
     
     if (db->Conectado) {
         printf ("Banco conectado\n");
@@ -66,7 +71,7 @@ int t003_ConexaoNOK (void) {
 
 int t004_StartTrans (void) {
     printf ("\n--------------------------\n005_StartTrans TEST\nConectando no banco 3.0 e iniciando uma transacao\n");
-    FBConnect *db = new FBConnect ("ada:employee", "SYSDBA", "aeShoo0amaike7aF");
+    FBConnect *db = new FBConnect (FB30PATH, FB30USER, FB30PASS);
     
     if (! db->Conectado) {
         printf ("ERRO CONEXAO %s\n", db->ErrorMsg);
@@ -99,9 +104,11 @@ int t004_StartTrans (void) {
     db = NULL;
     return 0;
 }
+
+
 int t005_Select (void) {
     printf ("\n--------------------------\n005_Select     TEST\n");
-    FBConnect *db = new FBConnect ("ada:employee", "SYSDBA", "aeShoo0amaike7aF");
+    FBConnect *db = new FBConnect (FB30PATH, FB30USER, FB30PASS);
     
     if (! db->Conectado) {
         printf ("ERRO CONEXAO %s\n", db->ErrorMsg);
@@ -118,9 +125,78 @@ int t005_Select (void) {
         return 1; }    
     printf ("Transacao de LEITURA  iniciada com sucesso!\n");
 
-    char stmt[40];
+    const char *stmt= "SELECT * FROM CUSTOMERS";
+
+    if (db->Select (stmt)) {
+        printf ("ERRO SELECT STATEMENT: %s\n", stmt);
+        delete (db);
+        db = NULL;
+        return 1; }    
+
+    printf ("SELECT STATEMENT OK!\n");
+
+    char dados[400];
+    memset (dados, '\0', sizeof (dados));
+    int ret = db->Fetch (dados);
+    if (ret && ret != 100L) {
+        printf ("ERRO FETCH STATEMENT: %s\n", stmt);
+        delete (db);
+        db = NULL;
+        return 1; }    
+
+    printf ("FETCH STATEMENT OK:\n%s", dados);
+
+    db->Commit();
+
+    delete (db);
+    db = NULL;
+    return 0;
+}
+
+int t006_SelectA (void) {
+    printf ("\n--------------------------\n006_Select STATMENT < 15    TEST\n");
+    FBConnect *db = new FBConnect (FB30PATH, FB30USER, FB30PASS);
     
-    strcpy (stmt, "SELECT * FROM CUSTOMERS");
+    if (! db->Conectado) {
+        printf ("ERRO CONEXAO %s\n", db->ErrorMsg);
+        return 1;
+    }
+
+    printf ("Banco conectado\n");
+
+    db->Start(FBREAD);
+    if (! db->InTrans) {
+        printf ("ERRO Transacao de LEITURA\n");
+        delete (db);
+        db = NULL;
+        return 1; }    
+    printf ("Transacao de LEITURA  iniciada com sucesso!\n");
+
+    const char *stmt= "SELECT * FROM ";
+
+    if (db->Select (stmt)) {
+        printf ("ERRO SELECT STATEMENT: %s\n%s", stmt, db->ErrorMsg);
+        printf ("TEST SELECT STATEMENT < 15 OK!\n");
+        delete (db);
+        db = NULL;
+        return 0; }    
+
+    printf ("ERRO TESTE STATEMENT < 15 !\n");
+    return -1;
+}
+
+int t007_SelectB (void) {
+    printf ("\n--------------------------\n007_Select AutoTransaction    TEST\n");
+    FBConnect *db = new FBConnect (FB30PATH, FB30USER, FB30PASS);
+    
+    if (! db->Conectado) {
+        printf ("ERRO CONEXAO %s\n", db->ErrorMsg);
+        return 1;
+    }
+
+    printf ("Banco conectado\n");
+
+    const char *stmt= "SELECT * FROM CUSTOMERS";
 
     if (db->Select (stmt)) {
         printf ("ERRO SELECT STATEMENT: %s\n", stmt);
@@ -159,6 +235,10 @@ int main (void) {
     else                    printf ("\n004_StartTrans PASS\n--------------------------\n\n");
     if (t005_Select()    ){ printf ("\n005_Select     FAIL\n--------------------------\n\n"); return 0; }
     else                    printf ("\n005_Select     PASS\n--------------------------\n\n");
-    
+    if (t006_SelectA()   ){ printf ("\n006_SelectA    FAIL\n--------------------------\n\n"); return 0; }
+    else                    printf ("\n006_SelectA    PASS\n--------------------------\n\n");
+/*    if (t007_SelectB()   ){ printf ("\n007_SelectB    FAIL\n--------------------------\n\n"); return 0; }
+    else                    printf ("\n007_SelectB    PASS\n--------------------------\n\n");
+*/    
     return 0;
 }    

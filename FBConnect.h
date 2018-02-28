@@ -34,6 +34,11 @@ using namespace Firebird;
 #define FBREAD  '1'
 #define FBWRITE '2'
 
+struct FBMeta {
+    const char *campo;
+    unsigned   tamanho;
+    unsigned   offset;
+};
 
 class FBConnect
 {
@@ -46,11 +51,14 @@ IXpbBuilder  *TPB_RO;
 IXpbBuilder  *TPB_RW;
 IAttachment  *ATTATCHMENT;
 ITransaction *TRANSACTION;
+FBMeta       *CAMPOS;
+
+int Prepare (const char *stmt);
 
 public:
 char            ErrorMsg[356];
 int             Colunas;
-int *           ColunSize;
+int            *ColunSize;
 unsigned char   Status;
 bool            Conectado;
 bool            InTrans;
@@ -66,7 +74,7 @@ int CommitRetaining (void);
 
 // SELECT COM RETORNO DE DADOS
 int Fetch           (char *dados);
-int Select          (char *stmt);
-int Execute         (char *stmt);
-int ExecuteBind     (char *stmt, char **dados, int dimensao);
+int Select          (const char *stmt);
+int Execute         (const char *stmt);
+int ExecuteBind     (const char *stmt, char **dados, int dimensao);
 }; //IbaseConnect
