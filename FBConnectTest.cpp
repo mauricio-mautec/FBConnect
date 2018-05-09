@@ -1,9 +1,9 @@
 #include "FBConnect.h"
-#define FB25PATH "rondon:/srv/mautec/database/teste.fdb"
+#define FB25PATH ""
 #define FB25PASS "masterke"
-#define FB25USER "SYSDBA"
-#define FB30PATH "ada:BSOICA3"
-#define FB30PASS "MasterKey0000000"
+#define FB25USER ""
+#define FB30PATH ""
+#define FB30PASS ""
 #define FB30USER "SYSDBA"
 
 int t001_Conexao25(void) {
