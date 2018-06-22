@@ -34,34 +34,43 @@ using namespace Firebird;
 #define FBREAD  '1'
 #define FBWRITE '2'
 
-struct FBMeta {
-    const char *campo;
-    unsigned   tamanho;
+typedef struct fbcol {
+    const char *name;
+    unsigned   length;
     unsigned   offset;
-};
+} FBCOL;
 
 class FBConnect
 {
 
 private:
-IStatus      *STATUS;
-IProvider    *PROVIDER;
-IUtil        *UTIL;
-IXpbBuilder  *TPB_RO;
-IXpbBuilder  *TPB_RW;
-IAttachment  *ATTATCHMENT;
-ITransaction *TRANSACTION;
-FBMeta       *CAMPOS;
+IStatus          *STATUS;
+IProvider        *PROVIDER;
+IUtil            *UTIL;
+IXpbBuilder      *TPB_RO;
+IXpbBuilder      *TPB_RW;
+IAttachment      *ATTATCHMENT;
+ITransaction     *TRANSACTION;
+IResultSet       *CURSOR;
+IMessageMetadata *METAI, *METAO;
+IMetadataBuilder *BUILDER;
+IStatement       *STATEMENT;
 
 int Prepare (const char *stmt);
 
+FBCOL          *FBCol;
+unsigned char  *BufferData;
+unsigned        BufferSize;   
+unsigned        FCount;
+
 public:
+unsigned        getCount (void);
 char            ErrorMsg[356];
-int             Colunas;
-int            *ColunSize;
+
 unsigned char   Status;
-bool            Conectado;
+bool            Connected;
 bool            InTrans;
+
 
 FBConnect (const char * banco, const char * user , const char * senha );
 ~FBConnect();
@@ -73,8 +82,10 @@ int Commit          (void);
 int CommitRetaining (void);
 
 // SELECT COM RETORNO DE DADOS
-int Fetch           (char *dados);
-int Select          (const char *stmt);
-int Execute         (const char *stmt);
-int ExecuteBind     (const char *stmt, char **dados, int dimensao);
+int getRow          (unsigned char *);
+int Fetch           (void);
+int getSize         (void);
+int Select          (const char *stmt);                               // RETURN MANY ROWS
+int Execute         (const char *stmt);                               // RETURN ONE  ROWS 
+int ExecuteBind     (const char *stmt, char **dados, int dimensao);   // EXECUTE MANY TIMES
 }; //IbaseConnect

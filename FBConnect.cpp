@@ -17,16 +17,25 @@ FBConnect::FBConnect (const char * banco, const char * user, const char * senha)
     this->PROVIDER    = NULL;
     this->ATTATCHMENT = NULL;
     this->UTIL        = NULL;
+    this->CURSOR      = NULL;
+    this->METAI       = NULL;
+    this->METAO       = NULL;
+    this->BUILDER     = NULL;
+    this->STATEMENT   = NULL;
+    this->FBCol       = NULL;
+    this->BufferData  = NULL;
+    this->BufferSize  = 0;
 
     this->STATUS   = Master->getStatus();
     this->PROVIDER = Master->getDispatcher();
     this->UTIL     = Master->getUtilInterface();
+    this->FCount   = 0;
     this->InTrans  = false;
 
     ThrowStatusWrapper status(this->STATUS);
 
     IXpbBuilder* dpb = NULL;
-    dpb = this->UTIL->getXpbBuilder(&status, IXpbBuilder::DPB, NULL, 0);
+    dpb = this->UTIL->getXpbBuilder (&status, IXpbBuilder::DPB, NULL, 0);
     
     dpb->insertString (&status, isc_dpb_user_name, user);
     dpb->insertString (&status, isc_dpb_password, senha);
@@ -40,19 +49,19 @@ FBConnect::FBConnect (const char * banco, const char * user, const char * senha)
     
         // PREPARA TPB RO
         this->TPB_RO = this->UTIL->getXpbBuilder (&status, IXpbBuilder::TPB, NULL, 0);
-        this->TPB_RO->insertTag(&status, isc_tpb_read_committed);
-        this->TPB_RO->insertTag(&status, isc_tpb_no_rec_version);
-        this->TPB_RO->insertTag(&status, isc_tpb_wait);
-        this->TPB_RO->insertTag(&status, isc_tpb_read);
+        this->TPB_RO->insertTag (&status, isc_tpb_read_committed);
+        this->TPB_RO->insertTag (&status, isc_tpb_no_rec_version);
+        this->TPB_RO->insertTag (&status, isc_tpb_wait);
+        this->TPB_RO->insertTag (&status, isc_tpb_read);
 
         // PREPARA TPB RW
         this->TPB_RW = this->UTIL->getXpbBuilder (&status, IXpbBuilder::TPB, NULL, 0);
-        this->TPB_RW->insertTag(&status, isc_tpb_read_committed);
-        this->TPB_RW->insertTag(&status, isc_tpb_no_rec_version);
-        this->TPB_RW->insertTag(&status, isc_tpb_wait);
-        this->TPB_RW->insertTag(&status, isc_tpb_write);
+        this->TPB_RW->insertTag (&status, isc_tpb_read_committed);
+        this->TPB_RW->insertTag (&status, isc_tpb_no_rec_version);
+        this->TPB_RW->insertTag (&status, isc_tpb_wait);
+        this->TPB_RW->insertTag (&status, isc_tpb_write);
         
-        this->Conectado = true;
+        this->Connected = true;
     }
     catch (const FbException& error) {                                                                                                                                         
         char buf[356];                                                                                                                            
@@ -61,7 +70,7 @@ FBConnect::FBConnect (const char * banco, const char * user, const char * senha)
         sprintf (this->ErrorMsg, "%s\n", buf);                                                                                                             
         
         dpb->dispose(); 
-        this->Conectado = false;
+        this->Connected = false;
         this->PROVIDER->release();
         this->STATUS->dispose();
         this->TPB_RO      = NULL; 
@@ -69,6 +78,7 @@ FBConnect::FBConnect (const char * banco, const char * user, const char * senha)
         this->STATUS      = NULL; 
         this->PROVIDER    = NULL;
         this->ATTATCHMENT = NULL;
+        this->STATEMENT   = NULL;
         this->UTIL        = NULL;
 
     }
@@ -98,7 +108,7 @@ FBConnect::~FBConnect()
 // INICIA UMA TRANSACAO RO/RW
 int FBConnect::Start (char readwrite)
 {
-    if (! this->Conectado) return -1;
+    if (! this->Connected) return -1;
    
     if (this->InTrans) return 0;
 
@@ -115,7 +125,7 @@ int FBConnect::Start (char readwrite)
                             this->TPB_RW->getBufferLength(&status),
                             this->TPB_RW->getBuffer(&status));
     this->InTrans = true;
-
+printf ("SAIDO DO RETURN 0 FINAL\n");
     return 0;
 }
 
@@ -129,6 +139,13 @@ int FBConnect::Commit (void)
         this->TRANSACTION->commit (&status);
         this->InTrans     = false;
         this->TRANSACTION = NULL;
+
+        if (this->BufferData != NULL) delete[] this->BufferData;
+        if (this->FBCol      != NULL) delete[] this->FBCol;
+
+        this->BufferData = NULL;
+        this->FBCol      = NULL;
+
         return 0;
     }
     catch (const FbException& error) {                                                                                                                                         
@@ -157,19 +174,218 @@ int FBConnect::CommitRetaining (void)
     }
 }
 
-int FBConnect::Fetch  (char *dados)
-{
-    return 0;
-}
-
 /* PRIVATE: PREPARE
 ** PREPARA CAMPOS DE RETORNO
 ** DOS DADOS SOLICITADOS NO STATEMENT
 */
 int FBConnect::Prepare (const char *stmt)
 {
+    if (! this->InTrans || this->TRANSACTION == 0L) return -1;
+
+    ThrowStatusWrapper status(this->STATUS);
+    try {
+    this->STATEMENT = this->ATTATCHMENT->prepare (&status,
+                                        this->TRANSACTION,
+                                                        0,
+                                                     stmt, 
+                                           SAMPLES_DIALECT, //SQL_DIALECT_V6,
+                     IStatement::PREPARE_PREFETCH_METADATA);
+   }
+   catch (const FbException &error) {
+        this->UTIL->formatStatus (this->ErrorMsg, sizeof (this->ErrorMsg), error.getStatus());
+        return -1;
+   }
+
+printf ("GETOUTPUT METADATA\n");
+
+    // QUANTIDADE DE COLUNAS , NOMES E TIPOS DOS DADOS
+    this->METAO    = this->STATEMENT->getOutputMetadata (&status);
+    this->BUILDER  = this->METAO->getBuilder            (&status);
+    this->FCount   = this->METAO->getCount              (&status);
+
+    this->FBCol    = new FBCOL [this->FCount];
+
+    memset (this->FBCol, 0 , sizeof (FBCOL) * this->FCount);
+
+    for (unsigned i = 0; i < this->FCount; ++i) {
+        // NOME DO CAMPO
+        this->FBCol[i].name = this->METAO->getField (&status, i);
+        printf ("\nCAMPO %s: ",this->FBCol[i].name);
+        // TIPO DO CAMPO
+        unsigned t = this->METAO->getType (&status, i);
+        switch (t) {
+        case SQL_VARYING:
+        case SQL_TEXT:
+            printf ("TEXT OR VARYING\n");            
+            this->BUILDER->setType (&status, i, SQL_TEXT);
+            break;
+        case SQL_SHORT:
+            printf ("SHORT          \n");            
+            this->BUILDER->setType (&status, i, SQL_SHORT);
+            break;
+        case SQL_LONG:
+            printf ("LONG           \n");            
+            this->BUILDER->setType (&status, i, SQL_LONG);
+            break;                              
+        case SQL_INT64:                         
+            printf ("INT64          \n");            
+            this->BUILDER->setType (&status, i, SQL_INT64);
+            break;
+        case SQL_FLOAT:
+            printf ("FLOAT          \n");            
+            this->BUILDER->setType (&status, i, SQL_FLOAT);
+            break;                             
+        case SQL_DOUBLE:                       
+            printf ("DOUBLE         \n");            
+            this->BUILDER->setType (&status, i, SQL_DOUBLE);
+            break;                             
+        case SQL_TIMESTAMP:                    
+            printf ("TIMESTAMP      \n");            
+            this->BUILDER->setType (&status, i, SQL_TIMESTAMP);
+            break;                             
+        case SQL_TYPE_DATE:                    
+            printf ("DATE           \n");            
+            this->BUILDER->setType (&status, i, SQL_TYPE_DATE);
+            break;
+        case SQL_TYPE_TIME:
+            printf ("TIME           \n");            
+            this->BUILDER->setType (&status, i, SQL_TYPE_TIME);
+            break;                             
+        case SQL_BLOB:                         
+            printf ("BLOB           \n");            
+            this->BUILDER->setType (&status, i, SQL_BLOB);
+            break;                             
+        case SQL_ARRAY:                        
+            printf ("ARRAY          \n");            
+            this->BUILDER->setType (&status, i, SQL_ARRAY);
+            break;                               
+        default:
+            printf ("CASE NOT FOUND![%d]", t);
+        }                                        
+    }                                          
+
+    // LIBERA METADATA, BUILDER
+    // RECEBE NOVAMENTE METADATA AGORA COM OS
+    // CAMPOS DEFINIDOS
+    // COMPRIMENTO E TAMANHO DO CAMPO
+    this->METAO->release();
+    this->METAO   = this->BUILDER->getMetadata (&status);
+    this->BUILDER->release();
+    this->BUILDER = NULL;
+
+    for (unsigned i = 0; i < this->FCount; ++i) {
+        this->FBCol[i].length = this->METAO->getLength (&status, i);
+        this->FBCol[i].offset = this->METAO->getOffset (&status, i);
+    }
+
+    // ABRE CURSOR
+    // ALOCA BUFFER SET BUFFERDATA, BUFFERSIZE
+    this->CURSOR     = this->STATEMENT->openCursor (&status, this->TRANSACTION, NULL, NULL, this->METAO, 0);
+    this->BufferSize = this->METAO->getMessageLength (&status);
+    
+    if (! this->BufferSize) {
+        sprintf (this->ErrorMsg, (char*)"BUFFER SIZE IS ZERO");
+        return -1;
+    }
+
+    this->BufferData = new unsigned char [this->BufferSize + 1];
+
+    if (this->BufferData == NULL)  {
+        sprintf (this->ErrorMsg, (char*)"UNABLE TO ALLOCATE BUFFER");
+        return -1;
+
+    }
+/*
+    unsigned char *buf = new unsigned char(this->BufferSize+1);
+    memset (buf, '\0', this->BufferSize + 1);
+    while (this->CURSOR->fetchNext (&status, buf) == IStatus::RESULT_OK) {
+        for (unsigned j = 0; j < this->FCount; ++j) {
+              printf("%*.*s ", this->FBCol[j].length, this->FBCol[j].length, buf + this->FBCol[j].offset);
+              printf("\n");
+        }      
+        memset (buf, '\0', this->BufferSize + 1);
+    }
+*/
+printf ("BUFFERSIZE: %d\n", this->BufferSize);
+
+    return 0;
+}
+
+/* PRIVATE: FETCH
+** LOAD A ROW OF DATA INTO BUFFER
+*/
+int FBConnect::Fetch(void)
+{   
+    //memset(fields, 0, sizeof(MyField) * this->FBCOL);
+
+    int Result;
 
 
+    ThrowStatusWrapper status(this->STATUS);
+    char dados[300];
+    memset (dados, '\0',300);
+    printf("Dados----->>>>>>>: %s\n", dados);
+    Result = this->CURSOR->fetchNext (&status, dados);
+
+    for (unsigned i = 0; i < this->FCount; ++i) {
+        //unsigned char* field_N_ptr = dados + this->METAO->getOffset(&status, i);
+        this->FBCol[i].offset = this->METAO->getOffset (&status, i);
+        //printf("%*.*\n", this->FBCol[i]);
+        printf("%s \n", this->METAO->getField(&status, i));
+    }
+
+    // this->FBCol    = new FBCOL [this->FCount];
+    // MyField* fields = new MyField[this->FBCol];
+
+
+
+
+
+    //for(int line = 0; this->CURSOR->getchNext(&status, buffer1) == IStatus::Result_OK; ++line)
+
+
+
+
+    // unsigned char* buffer1 = new unsigned char[l];
+    //unsigned f = 0;
+/*    while (this->CURSOR->fetchNext(&status, dados) == IStatus::RESULT_OK) {
+        printf("OK\n");
+
+    }*/
+
+    // printf("Result is: %s\n", Result);
+
+    printf("Dados apos fetchNext ----->>>>>>>: %s\n", dados);
+
+    //printf ("--------------->DADOS %d %d [%s]\n",Result, this->BufferSize, dados);
+    //printf("Olha o status: --->>>>>>%d\n", &status);
+    switch (Result) {
+        case IStatus::RESULT_OK:      return    0;
+        case IStatus::RESULT_NO_DATA: return 100L;
+        case IStatus::RESULT_ERROR:   return   -1;
+    }
+
+}
+
+/* PUBLIC: GETSIZE
+** RETURN BUFFERSIZE VALUE
+*/
+int FBConnect::getSize (void)
+{
+
+    return this->BufferSize;
+
+}
+
+/* PUBLIC: GETROW
+** COPY FROM BUFFER TO USER VAR
+*/
+int FBConnect::getRow (unsigned char *dados)
+{
+    if (! this->InTrans    ||   this->TRANSACTION == 0L) return -1;
+    if (! this->BufferData || ! this->BufferSize)        return -1;
+
+    memcpy (dados, this->BufferData, this->BufferSize );
     return 0;
 }
 
@@ -189,8 +405,8 @@ int FBConnect::Select (const char *stmt)
     // {
     // Iniciar automaticamente uma transacao
     if (! this->InTrans && this->Start (FBREAD)) return -1;
-  
     // Prepara a transacao
+    
     if (this->Prepare (stmt)) {
         strcpy (this->ErrorMsg, "FBConnect::Select:Prepare: UNABLE TO SETUP STATEMENT");
         return -1; }

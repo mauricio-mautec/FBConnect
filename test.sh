@@ -1,7 +1,6 @@
 #!/bin/bash
 rm a.out
 rm FBConnect.o
-rm *.o
 
 gcc -c -ggdb FBConnect.cpp -I/usr/include/firebird -lstdc++ -lfbclient
 gcc FBConnectTest.cpp FBConnect.o -ggdb -I/usr/include/firebird -lstdc++ -lfbclient
