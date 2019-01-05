@@ -1,4 +1,5 @@
 #!/bin/bash
+clear
 rm a.out
 rm FBConnect.o
 

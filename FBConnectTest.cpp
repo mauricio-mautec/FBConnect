@@ -1,9 +1,9 @@
 #include "FBConnect.h"
-#define FB25PATH "rondon:/srv/mautec/database/teste.fdb"
-#define FB25PASS "aeShoo0a"
+#define FB25PATH ""
+#define FB25PASS ""
 #define FB25USER "SYSDBA"
-#define FB30PATH "ada:employee"
-#define FB30PASS "aeShoo0amaike7aF"
+#define FB30PATH "dev01:employee"
+#define FB30PASS "masterkey"
 #define FB30USER "SYSDBA"
 
 int t001_Conexao25(void) {
@@ -138,6 +138,11 @@ int t005_SelectUT (void) {
     return 1;
 }
 
+/*
+ *  Teste numero 6, usado para avaliar retorno simples
+ *  de um BLOB
+ * */
+
 int t006_Select (void) {
     printf ("\n--------------------------\n006_Select           TEST\n");
     printf("BANCO------->>>>%s\n", FB30PATH);
@@ -158,8 +163,7 @@ int t006_Select (void) {
         return 1; }    
     printf ("Transacao de LEITURA  iniciada com sucesso!\n");
 
-     const char *stmt= "SELECT * FROM CUSTOMER";
-     //const char *stmt= "SELECT CONTACT_FIRST, CONTACT_LAST, CITY   FROM CUSTOMER";
+     const char *stmt= "SELECT PROJ_DESC, PROJ_NAME, PROJ_DESC  FROM PROJECT";
 
     if (db->Select (stmt)) {
         printf ("ERRO SELECT STATEMENT: %s\n", stmt);
@@ -171,30 +175,75 @@ int t006_Select (void) {
     printf ("SELECT STATEMENT OK!\n");
 
     int ret = db->Fetch (); // DADOS ALOCADO INTERNAMENTE
-
+/*
     if (ret && ret != 100L) {
         printf ("ERRO FETCH STATEMENT: %s\n", stmt);
         delete (db);
         db = NULL;
         return 1; }    
+*/
 
+    int intBlob;
+    int tamanho;
 
-/*
-    unsigned char *dados = new unsigned char [db->getSize()];
     do {
-        memset (dados, '\0', db->getSize());
-        ret = db->getRow (dados);
-        //printf("---------->>>>>>>>>>>%s/n", dados);
-        if (!ret) printf ("DADOS RAW [%s]\n", dados);
-    } while (!db->Fetch());
+   
+	// Obtem o tamanho necessario para armazenar a resposta do getColumn
+    	tamanho = db->getDataSize(0);
+
+	// aloca a variavel para armazenameneto da resposta do getColumn
+        unsigned char *dados = new unsigned char [tamanho];
+        memset (dados, '\0', tamanho);
+
+       // O getColumn vai retornar os dados que estao nas tuplas ou, caso blob, retorna o blobID
+       db->getColumn (dados, 0);
+
+
+
+	if( db->isBlob(0) && db->blobType(0))
+	{
+		// tamanho de caracteres para se alocar espaco
+    		int t;
+		// o retorno ira armazenar se tem um handler para trabalhar com o blob ou nao
+		int retorno;
+		// caso a alocacao do handler ocorra, chama o metodo getBlobSize
+		// para se obter o tamanho de espaco necessario para alocar os dados
+       		retorno = db->workBlob(dados) ;
+		if(retorno) {
+			// chamada do metodo para se obter a quantidade de characteres
+			t = db->getBlobSize(db->blob);
+		}
+       		//t += 1;
+       		unsigned char *texto = new unsigned char [t];
+       		memset(texto, '\0', t);
+        	printf("QUANTIDADE DE CARACTERES ---------->>>>>>>>>>>%d\n", t);
+		intBlob = 	db->GetTextBlob(texto);
+       		printf("TEXTO : [%s] \n", texto);
+        	t = 0;
+	}	
+				
+   
+
+
+    	tamanho = db->getDataSize(1);
+
+    	unsigned char *dados1 = new unsigned char [tamanho];
+
+    	memset (dados1, '\0', tamanho);
+
+    	db->getColumn (dados1, 1);
+
+    	printf("TEXTO : [%s] \n", dados1);
+	ret = db->Fetch();
+    } while (!ret);
+
 
     printf ("FETCH STATEMENT OK:\n");
 
     db->Commit();
-
     delete (db);
     db = NULL;
-*/    
+    
     return 0;
 }
 
@@ -269,7 +318,7 @@ int t008_SelectB (void) {
     return 0;
 }
 
-int main (void) {
+int main (int argc, char* argv[]) {
      printf("############################################\n");
 /*
     
