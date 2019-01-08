@@ -200,14 +200,13 @@ int FBConnect::Prepare (const char *stmt)
         return -1;
    }
 
-printf ("GETOUTPUT METADATA\n");
+   // GETOUTPUT METADATA
 
-    // QUANTIDADE DE COLUNAS , NOMES E TIPOS DOS DADOS
+    // NUMBER OF COLUMNS, NAMES AND DATA TYPES
     this->METAO    = this->STATEMENT->getOutputMetadata (&status);
     this->BUILDER  = this->METAO->getBuilder            (&status);
     this->FCount   = this->METAO->getCount              (&status);
     this->FBCol    = new FBCOL [this->FCount];
-    //this->sub      = this->
 
     memset (this->FBCol, 0 , sizeof (FBCOL) * this->FCount);
 
@@ -219,61 +218,61 @@ printf ("GETOUTPUT METADATA\n");
         switch (t) {
         case SQL_VARYING:
         case SQL_TEXT:
-            printf ("TEXT OR VARYING\n");            
+           //printf ("TEXT OR VARYING\n");            
             this->BUILDER->setType (&status, i, SQL_TEXT);
             break;
         case SQL_SHORT:
-            printf ("SHORT          \n");            
+           //printf ("SHORT          \n");            
             this->BUILDER->setType (&status, i, SQL_SHORT);
             break;
         case SQL_LONG:
-            printf ("LONG           \n");            
+           // printf ("LONG           \n");            
             this->BUILDER->setType (&status, i, SQL_LONG);
             break;                              
         case SQL_INT64:                         
-            printf ("INT64          \n");            
+            //printf ("INT64          \n");            
             this->BUILDER->setType (&status, i, SQL_INT64);
             break;
         case SQL_FLOAT:
-            printf ("FLOAT          \n");            
+            //printf ("FLOAT          \n");            
             this->BUILDER->setType (&status, i, SQL_FLOAT);
             break;                             
         case SQL_DOUBLE:                       
-            printf ("DOUBLE         \n");            
+            //printf ("DOUBLE         \n");            
             this->BUILDER->setType (&status, i, SQL_DOUBLE);
             break;                             
         case SQL_TIMESTAMP:                    
-            printf ("TIMESTAMP      \n");            
+            //printf ("TIMESTAMP      \n");            
             this->BUILDER->setType (&status, i, SQL_TIMESTAMP);
             break;                             
         case SQL_TYPE_DATE:                    
-            printf ("DATE           \n");            
+            //printf ("DATE           \n");            
             this->BUILDER->setType (&status, i, SQL_TYPE_DATE);
             break;
         case SQL_TYPE_TIME:
-            printf ("TIME           \n");            
+            //printf ("TIME           \n");            
             this->BUILDER->setType (&status, i, SQL_TYPE_TIME);
             break;                             
         case SQL_BLOB:                         
-            printf ("BLOB           \n");            
+            //printf ("BLOB           \n");            
             this->BUILDER->setType (&status, i, SQL_BLOB);
 	    sub = this->METAO->getSubType(&status, i); 
 	    this->FBCol[i].subData = sub;
             break;                             
         case SQL_ARRAY:                        
-            printf ("ARRAY          \n");            
+            //printf ("ARRAY          \n");            
             this->BUILDER->setType (&status, i, SQL_ARRAY);
             break;                               
         default:
-            printf ("CASE NOT FOUND![%d]", t);
+            //printf ("CASE NOT FOUND![%d]", t);
+	    return 0;
         }                                        
 	
     }                                          
 
-    // LIBERA METADATA, BUILDER
-    // RECEBE NOVAMENTE METADATA AGORA COM OS
-    // CAMPOS DEFINIDOS
-    // COMPRIMENTO E TAMANHO DO CAMPO
+    // FREE METADATA, BUILDER
+    // RECEIVE NOVAMENTE AGAIN WITH 
+    // DEFINED FIELDS
     this->METAO->release();
     this->METAO   = this->BUILDER->getMetadata (&status);
     this->BUILDER->release();
@@ -287,8 +286,8 @@ printf ("GETOUTPUT METADATA\n");
     	}
     }
 
-    // ABRE CURSOR
-    // ALOCA BUFFER SET BUFFERDATA, BUFFERSIZE
+    // OPEN CURSOR
+    // ALLOCATE BUFFER, SET BUFFERDATA, BUFFERSIZE
      //IMessageMetadata* inMetadata;
     this->CURSOR     = this->STATEMENT->openCursor (&status, this->TRANSACTION, NULL , NULL, this->METAO, 0);
     this->BufferSize = this->METAO->getMessageLength (&status);
