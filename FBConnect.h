@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <string>
 
 #if defined(__cplusplus) && (__cplusplus >= 201103L)
 #include <atomic>
@@ -30,6 +31,7 @@ T as(unsigned char* ptr)
 }
 
 using namespace Firebird;
+using namespace std;
 #define ISC_INT64_FORMAT	"ll" 
 #define SAMPLES_DIALECT SQL_DIALECT_V6
 #define ZERA( a ) memset( a, '\0', sizeof( a ))
@@ -50,7 +52,7 @@ typedef struct fbcol {
     unsigned   offset;
 } FBCOL;
 
-struct tm
+struct fbc_tm
     {
       int tm_sec;
       int tm_min;
@@ -122,6 +124,8 @@ bool 		isFetchOK;
 IBlob*          blob;
 //int  GetTextBlob    (char *); 
 //int  GetTextBlob    (unsigned char *, int); 
+string GetTextBlob ();
+
 int  GetTextBlob    (unsigned char *); 
 int  GetFileBlob    (FILE *blob);
 int  SetTextBlob    (char *, char *, int);

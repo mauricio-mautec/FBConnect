@@ -5,7 +5,11 @@
 #include <sys/time.h>
 #include <syslog.h>
 #include "FBConnect.h"
+#include <iostream>
+#include <string>
+#include <sstream>
 
+using namespace std;
 static IMaster *Master = fb_get_master_interface();
 
 FBConnect::FBConnect (const char * banco, const char * user, const char * senha)
@@ -425,7 +429,7 @@ int FBConnect::getColumn(unsigned char *p, int col)
     int len; 
     unsigned t = FBCol[col].typeData;
     short dscale;
-    struct tm times;
+    struct fbc_tm times;
     char        blob_s[20], date_s[25];
 
 
@@ -591,17 +595,19 @@ int FBConnect::ExecuteBind (const char *stmt, char **dados, int dimensao)
 /* PUBLIC : GetTextBlob
 ** RETURN THE CHARACTERS OF A BLOB TEXT COLUMN
 */
-int FBConnect::GetTextBlob  (unsigned char* d)
+//int FBConnect::GetTextBlob  (unsigned char* d)
+string FBConnect::GetTextBlob ()
 {
 
     char *p;
     //ThrowStatusWrapper status(this->STATUS);
-    if (! this->InTrans    ||   this->TRANSACTION == 0L) return -1;
-    if (! this->BufferData || ! this->BufferSize)        return -1;
+    if (! this->InTrans    ||   this->TRANSACTION == 0L) "Error";
+    if (! this->BufferData || ! this->BufferSize)        "Error";
     
 
     ThrowStatusWrapper status(this->STATUS);
     unsigned len;
+    string d;
 
 
 
@@ -618,9 +624,12 @@ int FBConnect::GetTextBlob  (unsigned char* d)
 			if (cc != IStatus::RESULT_OK && cc != IStatus::RESULT_SEGMENT)
 				break;
 			
-			strcat((char *)d, this->BlobSegment);
+			//strcat((char *)d, this->BlobSegment);
+            stringstream tmp;
+            tmp << this->BlobSegment;
+            d += tmp.str();
 			
-    			memset (this->BlobSegment, '\0', sizeof (this->BlobSegment));
+    		memset (this->BlobSegment, '\0', sizeof (this->BlobSegment));
 
 		}	
 
@@ -632,7 +641,7 @@ int FBConnect::GetTextBlob  (unsigned char* d)
 	   this->blob->release();
     //blob->close(&status);
     this->blob = NULL;
-    return 0;
+    return d;
 }
 
 // ATUALIZACAO 18 DE NOVEMBRO DE 2018

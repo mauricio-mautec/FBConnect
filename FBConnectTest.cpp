@@ -1,13 +1,25 @@
 #include "FBConnect.h"
+#include <string>
+#include <iostream>
+
 #define FB25PATH ""
 #define FB25PASS ""
 #define FB25USER "SYSDBA"
+<<<<<
+#define FB30PATH "thor:employee"
+#define FB30PASS "veiM4biuEengah1o"
+#define FB30USER "SYSDBA"
+
+using namespace std;
+int t001_Conexao25(void) {
+
 #define FB30PATH "dev01:employee" 
 #define FB30PASS "masterkey"
 #define FB30USER "SYSDBA"
 
 /*
 int t001_Conexao30(void) {
+
     printf ("\n--------------------------\n001_Conexao25  TEST\nConectando no banco VERSAO 2.5\n");
     FBConnect *db = new FBConnect (FB25PATH, FB25USER, FB25PASS);
     if (! db->Connected) {
@@ -234,11 +246,24 @@ int t006_SelectBl (void) {
 			// Get the number of butes needed
 			t = db->getBlobSize(db->blob);
 		}
+
+       		//t += 1;
+        string basic_string;
+       	//	unsigned char *texto = new unsigned char [t];
+        basic_string = db->GetTextBlob();
+            //string basic_string = "Oi";
+       	//memset(texto, '\0', t);
+        //printf("QUANTIDADE DE CARACTERES ---------->>>>>>>>>>>%d\n", t);
+		//intBlob = 	db->GetTextBlob(texto);
+       	//	printf("TEXTO : [%s] \n", texto);
+        cout << basic_string << endl;
+
 		t += 1;
        		unsigned char *texto = new unsigned char [t];
        		memset(texto, '\0', t);
 		intBlob = 	db->GetTextBlob(texto);
        		printf("TEXTO : [%s] \n", texto);
+
         	t = 0;
 	}	
 				
