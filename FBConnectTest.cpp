@@ -11,29 +11,34 @@
 
 using namespace std;
 int t001_Conexao25(void) {
-    printf ("\n--------------------------\n001_Conexao25  TEST\nConectando no banco VERSAO 2.5\n");
+    printf ("\n--------------------------\n001_Conexao25  TEST\n Connecting to database Firebird 2.5\n");
     FBConnect *db = new FBConnect (FB25PATH, FB25USER, FB25PASS);
     if (! db->Connected) {
-        printf ("ERRO CONEXAO %s\n", db->ErrorMsg);
+        printf ("Connection Error %s\n", db->ErrorMsg);
         delete(db);
         return 1;
         }
-    printf ("Banco conectado\n");
+    printf ("Database Connected\n");
     delete(db);
     return 0;
 
 }
 
+/*
+ *  t002_ConexaoOK
+ *
+ *  This function tests the connection with Firebird
+ */
 int t002_ConexaoOK(void) {
-    printf ("\n--------------------------\n002_ConexaoOK  TEST\nConectando no banco\n");
+    printf ("\n--------------------------\n002_ConexaoOK  TEST\n Connecting to Database\n");
     FBConnect *db = new FBConnect (FB30PATH, FB30USER, FB30PASS);
 
     if (! db->Connected) {
-        printf ("ERRO CONEXAO %s\n", db->ErrorMsg);
+        printf ("Connection Error %s\n", db->ErrorMsg);
         delete(db);
         return 1; }
 
-    printf ("Banco conectado\n");
+    printf ("Database Connected\n");
 
     delete(db);
     db = NULL;
@@ -42,39 +47,51 @@ int t002_ConexaoOK(void) {
 
 }
 
+/*
+ *  Function t003_ConexaoNOK
+ *
+ *  This function tests the connection with Firebird
+ *  with not valid user and password
+ */
 int t003_ConexaoNOK (void) {
-    printf ("\n--------------------------\n003_ConexaoNOK TEST\nConectando no banco com senha incorreta\n");
+    printf ("\n--------------------------\n003_ConexaoNOK TEST\nConnecting with invalid password\n");
     FBConnect *db = new FBConnect (FB30PATH, FB30USER, "thisisawrongpass");
     
     if (db->Connected) {
-        printf ("Banco conectado\n");
+        printf ("Database connected\n");
         delete (db);
         db = NULL;
         return 1;
     }
-    printf ("ERRO CONEXAO %s\n", db->ErrorMsg);
+    printf ("Connection Error %s\n", db->ErrorMsg);
     delete (db);
     db = NULL;
 
-    printf ("Conectando no banco com usuario incorreto\n");
-    db = new FBConnect ("ada:BSOICA3", "SSSDBA", "aeShoo0amaike7aF");
+    printf ("Connecting to database with invalid user\n");
+    db = new FBConnect ("server:DB", "USER", "PASSWRONG");
     
     if (db->Connected) {
-        printf ("Banco conectado\n");
+        printf ("Database Connection OK\n");
         delete (db);
         db = NULL;
         return 1;
     }
 
-    printf ("ERRO CONEXAO %s\n", db->ErrorMsg);
+    printf ("Connection Error %s\n", db->ErrorMsg);
     delete (db);
     db = NULL;
 
     return 0;
 }
 
+/*
+ *  Function t004_StartTrans
+ *
+ *  This function tests if Transaction is OK
+ *  
+ */
 int t004_StartTrans (void) {
-    printf ("\n--------------------------\n005_StartTrans TEST\nConectando no banco 3.0 e iniciando uma transacao\n");
+    printf ("\n--------------------------\n005_StartTrans TEST\nConnect with Firebird 3.0 e initiate a transaction\n");
     FBConnect *db = new FBConnect (FB30PATH, FB30USER, FB30PASS);
     
     if (! db->Connected) {
@@ -82,26 +99,26 @@ int t004_StartTrans (void) {
         return 1;
     }
 
-    printf ("Banco conectado\n");
+    printf ("Database connected\n");
 
     db->Start(FBREAD);
     if (! db->InTrans) {
-        printf ("ERRO Transacao de LEITURA\n");
+        printf ("ERROR Reading Transaction\n");
         delete (db);
         db = NULL;
         return 1; }    
-    printf ("Transacao de LEITURA  iniciada com sucesso!\n");
+    printf ("Reading transaction successfully started!\n");
 
 
     db->Commit();
 
     db->Start(FBWRITE);
     if (! db->InTrans) {
-        printf ("ERRO Transacao de GRAVACAO\n");
+        printf ("ERROR Write Transaction\n");
         delete (db);
         db = NULL;
         return 1; }    
-    printf ("Transacao de GRAVACAO iniciada com sucesso!\n");
+    printf ("Write transaction successfully started!\n");
 
     db->Commit();
     delete (db);
@@ -109,7 +126,13 @@ int t004_StartTrans (void) {
     return 0;
 }
 
-
+/*
+ *  Function t005_SelectUT
+ *
+ *  This function tests if  possible read
+ *  from a unavaiable table
+ *  
+ */
 int t005_SelectUT (void) {
     printf ("\n--------------------------\n005_SelectUnknowTable   TEST\n");
     FBConnect *db = new FBConnect (FB30PATH, FB30USER, FB30PASS);
@@ -119,19 +142,19 @@ int t005_SelectUT (void) {
         return 1;
     }
 
-    printf ("Banco conectado\n");
+    printf ("Database Connected!\n");
 
     if (db->Start (FBREAD ) || ! db->InTrans) {
-        printf ("ERRO Transacao de LEITURA\n");
+        printf ("ERROR Read Transaction\n");
         delete (db);
         db = NULL;
         return 1; }    
-    printf ("Transacao de LEITURA  iniciada com sucesso!\n");
+    printf ("Read tansaction  sucessfully started!\n");
 
     const char *stmt= "SELECT * FROM UNKNOWTABLE";
 
     if (db->Select (stmt)) {
-        printf ("ERRO SELECT STATEMENT: %s\n", stmt);
+        printf ("ERROR SELECT STATEMENT: %s\n", stmt);
         printf ("MESSAGE ERROR FROM FBConnect:%s\n", db->ErrorMsg);
         delete (db);
         db = NULL;
@@ -143,10 +166,12 @@ int t005_SelectUT (void) {
 }
 
 /*
- *  Teste numero 6, usado para avaliar retorno simples
- *  de um BLOB
- * */
-
+ *  Function t006_Select
+ *
+ *  This function tests if select with a blob field
+ *  and print the result of selected field 
+ *  
+ */
 int t006_Select (void) {
     printf ("\n--------------------------\n006_Select           TEST\n");
     printf("BANCO------->>>>%s\n", FB30PATH);
@@ -158,7 +183,7 @@ int t006_Select (void) {
     }
 
 
-    printf ("Banco conectado\n");
+    printf ("Database Connected\n");
 
     if (db->Start (FBREAD ) || ! db->InTrans) {
         printf ("ERRO Transacao de LEITURA\n");
@@ -223,7 +248,6 @@ int t006_Select (void) {
         basic_string = db->GetTextBlob();
             //string basic_string = "Oi";
        	//memset(texto, '\0', t);
-        //printf("QUANTIDADE DE CARACTERES ---------->>>>>>>>>>>%d\n", t);
 		//intBlob = 	db->GetTextBlob(texto);
        	//	printf("TEXTO : [%s] \n", texto);
         cout << basic_string << endl;
@@ -255,24 +279,31 @@ int t006_Select (void) {
     return 0;
 }
 
+/*
+ *  Function t007_SelectA
+ *
+ *  This function tests if select statement
+ *  is correct
+ *  
+ */
 int t007_SelectA (void) {
-    printf ("\n--------------------------\n007_SelectA STATMENT < 15    TEST\n");
+    printf ("\n--------------------------\n007_SelectA STATEMENT < 15    TEST\n");
     FBConnect *db = new FBConnect (FB30PATH, FB30USER, FB30PASS);
     
     if (! db->Connected) {
-        printf ("ERRO CONEXAO %s\n", db->ErrorMsg);
+        printf ("CONNECTION ERROR %s\n", db->ErrorMsg);
         return 1;
     }
 
-    printf ("Banco conectado\n");
+    printf ("CONNECTED\n");
 
     db->Start(FBREAD);
     if (! db->InTrans) {
-        printf ("ERRO Transacao de LEITURA\n");
+        printf ("Read Transaction ERROR\n");
         delete (db);
         db = NULL;
         return 1; }    
-    printf ("Transacao de LEITURA  iniciada com sucesso!\n");
+    printf ("Read Transaction sucessfully started!\n");
 
     const char *stmt= "SELECT * FROM ";
 
@@ -283,20 +314,27 @@ int t007_SelectA (void) {
         db = NULL;
         return 0; }    
 
-    printf ("ERRO TESTE STATEMENT < 15 !\n");
+    printf ("STATEMENT ERROR < 15 !\n");
     return -1;
 }
 
+/*
+ *  Function t008_SelectB
+ *
+ *  This function tests if select statement
+ *  is correct
+ *  
+ */
 int t008_SelectB (void) {
     printf ("\n--------------------------\n008_SelectB AutoTransaction    TEST\n");
     FBConnect *db = new FBConnect (FB30PATH, FB30USER, FB30PASS);
     
     if (! db->Connected) {
-        printf ("ERRO CONEXAO %s\n", db->ErrorMsg);
+        printf ("CONNECTION ERROR %s\n", db->ErrorMsg);
         return 1;
     }
 
-    printf ("Banco conectado\n");
+    printf ("Database Connected\n");
 
     const char *stmt= "SELECT * FROM CUSTOMER";
 
@@ -325,6 +363,88 @@ int t008_SelectB (void) {
     db = NULL;
     return 0;
 }
+/*
+ *  Function t009_SelectM
+ *
+ *  This function tests if we can get more
+ *  that one field
+ *  
+ */
+int t009_SelectM (void) {
+    printf ("\n--------------------------\n006_Select           TEST\n");
+    printf("BANCO------->>>>%s\n", FB30PATH);
+    FBConnect *db = new FBConnect (FB30PATH, FB30USER, FB30PASS);
+    
+    if (! db->Connected) {
+        printf ("ERROR CONNECTION %s\n", db->ErrorMsg);
+        return 1;
+    }
+
+
+    printf ("Database Connected\n");
+
+    if (db->Start (FBREAD ) || ! db->InTrans) {
+        printf ("ERROR Read Transaction\n");
+        delete (db);
+        db = NULL;
+        return 1; }    
+    printf ("Read Transaction sucessfully started!\n");
+
+     const char *stmt= "SELECT FIRST_NAME, HIRE_DATE, SALARY  FROM EMPLOYEE";
+
+    if (db->Select (stmt)) {
+        printf ("ERRO SELECT STATEMENT: %s\n", stmt);
+        printf ("MESSAGE ERROR FROM FBConnect:%s\n", db->ErrorMsg);
+        delete (db);
+        db = NULL;
+        return 1; }    
+
+    printf ("SELECT STATEMENT OK!\n");
+
+    int ret = db->Fetch (); // Allocated data
+
+    int tamanho;
+    int size0;
+    int size1;
+    int size2;
+    do {
+   
+	// Size needed to store the response
+    	size0 = db->getDataSize(0);
+    	size1 = db->getDataSize(1);
+    	size2 = db->getDataSize(2);
+
+	// variable to store the data
+        unsigned char *dados0 = new unsigned char [size0];
+        unsigned char *dados1 = new unsigned char [size1];
+        unsigned char *dados2 = new unsigned char [size2];
+        memset (dados0, '\0', size0);
+        memset (dados1, '\0', size1);
+        memset (dados2, '\0', size2);
+
+       // The getColumn return the data that is in the tuples if the field is a blob it returns blobid
+       db->getColumn (dados0, 0);
+       db->getColumn (dados1, 1);
+       db->getColumn (dados2, 2);
+
+	
+       		printf("Field 0 : [%s] \n", dados0);
+       		printf("Field 1 : [%s] \n", dados1);
+       		printf("Field 2 : [%s] \n", dados2);
+				
+	ret = db->Fetch();
+
+    } while (!ret);
+
+
+    printf ("FETCH STATEMENT OK:\n");
+
+    db->Commit();
+    delete (db);
+    db = NULL;
+    
+    return 0;
+}
 
 int main (int argc, char* argv[]) {
      printf("############################################\n");
@@ -351,7 +471,13 @@ int main (int argc, char* argv[]) {
     
     if (t008_SelectB()   ){ printf ("\n007_SelectB    FAIL\n--------------------------\n\n"); return 0; }
     else                    printf ("\n007_SelectB    PASS\n--------------------------\n\n");
+    if (t008_SelectB()   ){ printf ("\n008_SelectB    FAIL\n--------------------------\n\n"); return 0; }
+    else                    printf ("\n008_SelectB    PASS\n--------------------------\n\n");
+    
+    
+    if (t009_SelectM()   ){ printf ("\n009_SelectB    FAIL\n--------------------------\n\n"); return 0; }
+    else                    printf ("\n009_SelectB    PASS\n--------------------------\n\n");
+    retun 0;
 */    
-    return 0;
 }    
 
