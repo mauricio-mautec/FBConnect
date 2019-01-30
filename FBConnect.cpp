@@ -413,15 +413,16 @@ int FBConnect::getSize ()
 ** COPY COLUMN TO USER VAR
 */
 //int FBConnect::memoryPrint(unsigned char *dados, int col)
-int FBConnect::getColumn(unsigned char *p, int col)
+//int FBConnect::getColumn(unsigned char *p, int col)
+string FBConnect::getColumn(int tam, int col)
 {
-    if (! this->InTrans    ||   this->TRANSACTION == 0L) return -1;
-    if (! this->BufferData || ! this->BufferSize)        return -1;
+    if (! this->InTrans    ||   this->TRANSACTION == 0L) return "-1" ;
+    if (! this->BufferData || ! this->BufferSize)        return "-1";
 
     ThrowStatusWrapper status(this->STATUS);
 
     if( ! this->isFetchOK ) {
-        return -1;
+        return "-1";
     }
  
     // Armazena o retorno do sprintf
@@ -431,61 +432,98 @@ int FBConnect::getColumn(unsigned char *p, int col)
     short dscale;
     struct fbc_tm times;
     char        blob_s[20], date_s[25];
-
+    //unsigned char p2 = new unsigned char [tam];
+    //printf("TAMANHO ---->>> %d\n", tam);
+    //exit(0);
+    unsigned char *p2 = new unsigned char [tam];
+    unsigned char *pTemp = new unsigned char [30];
 
     ISC_QUAD    bid;
     
 
-	
+    stringstream tmp;
+    // return string
+    string fc_a;	
+
     ISC_INT64 value;
     switch (t)
     {
 	    case SQL_TEXT:
-    		n = sprintf((char *)p, "%-*s",  this->FBCol[col].length, this->BufferData + this->FBCol[col].offset);
+    		//n = sprintf((char *)p, "%-*s",  this->FBCol[col].length, this->BufferData + this->FBCol[col].offset);
 		break;
 	    case SQL_VARYING:
-    		n = sprintf((char *)p, "%-*s",  this->FBCol[col].length, this->BufferData + this->FBCol[col].offset);
+    		//n = sprintf((char *)p, "%-*s",  this->FBCol[col].length, this->BufferData + this->FBCol[col].offset);
+    		n = sprintf((char *)p2, "%-*s",  this->FBCol[col].length, this->BufferData + this->FBCol[col].offset);
+		tmp << p2;
+		fc_a = tmp.str();
+		//printf("##################################\n" );
 		break;
+		
 	    case SQL_SHORT:
-		sprintf((char *)p, "%d", *(short *) this->BufferData + this->FBCol[col].offset); 
+		sprintf((char *)p2, "%d", *(short *) this->BufferData + this->FBCol[col].offset); 
+		tmp << p2;
+		fc_a = tmp.str();
+
 		break;
+		
 	    case SQL_LONG:
-		sprintf((char *)p, "%ld", *(long *) this->BufferData + this->FBCol[col].offset);
+		sprintf((char *)p2, "%ld", *(long *) this->BufferData + this->FBCol[col].offset);
+		tmp << p2;
+		fc_a = tmp.str();
 		break;
+		
 	    case SQL_INT64:
 		len = this->FBCol[col].length;
 		dscale = this->METAO->getScale (&status, col);
-		
 		//ISC_INT64 value;
 		ISC_INT64 tens;
 
 	        value = 0;	
 		value = (ISC_INT64) *(ISC_INT64 ISC_FAR *) (this->BufferData + this->FBCol[col].offset);
 		break;
+		
                 case SQL_FLOAT:
-                sprintf ((char *)p, "%15g", *(float ISC_FAR *) (this->BufferData + this->FBCol[col].offset));
+                sprintf ((char *)p2, "%15g", *(float ISC_FAR *) (this->BufferData + this->FBCol[col].offset));
+		tmp << p2;
+		fc_a = tmp.str();
                 break;
 
             case SQL_DOUBLE:
-                sprintf((char *)p, "%24f", *(double ISC_FAR *) (this->BufferData + this->FBCol[col].offset));
+                sprintf((char *)p2, "%24f", *(double ISC_FAR *) (this->BufferData + this->FBCol[col].offset));
+		tmp << p2;
+		fc_a = tmp.str();
                 //len = 24;
                 break;
+		
 	    //case   
             case SQL_TIMESTAMP:
                 isc_decode_timestamp((ISC_TIMESTAMP ISC_FAR *)this->BufferData + this->FBCol[col].offset, &times);
                 sprintf(date_s, "%04d-%02d-%02d %02d:%02d:%02d.%04d", times.tm_year + 1900, times.tm_mon+1, times.tm_mday, times.tm_hour, times.tm_min, times.tm_sec, ((ISC_TIMESTAMP *)this->BufferData + this->FBCol[col].offset)-> timestamp_time % 10000);
-                sprintf((char *)p, "%*s", this->FBCol[col].length, date_s);
+                sprintf((char *)pTemp, "%*s", this->FBCol[col].length, date_s);
+
+		//printf("##################################\n" );
+		//printf("%s\n", p2);
+		tmp << pTemp;
+
+		
+		fc_a = tmp.str();
+		//exit(0);
                 break;
 
             case SQL_TYPE_DATE:
                 isc_decode_sql_date((ISC_DATE ISC_FAR *)this->BufferData + this->FBCol[col].offset, &times);
-                sprintf(date_s, "%04d-%02d-%02d", times.tm_year + 1900, times.tm_mon+1, times.tm_mday); sprintf((char *)p, "%*s", this->FBCol[col].length, date_s);
+                sprintf(date_s, "%04d-%02d-%02d", times.tm_year + 1900, times.tm_mon+1, times.tm_mday); sprintf((char *)p2, "%*s", this->FBCol[col].length, date_s);
+		tmp << p2;
+		fc_a = tmp.str();
                 break;
 
             case SQL_TYPE_TIME:
                 isc_decode_sql_time((ISC_TIME ISC_FAR *)this->BufferData + this->FBCol[col].offset, &times);
                 sprintf(date_s, "%02d:%02d:%02d.%04d", times.tm_hour, times.tm_min, times.tm_sec, (*((ISC_TIME *)this->BufferData + this->FBCol[col].offset)) % 10000);
-                sprintf((char *)p, "%*s", this->FBCol[col].length, date_s);
+                sprintf((char *)p2, "%*s", this->FBCol[col].length, date_s);
+		printf("Olha o tempo %s\n", p2);
+		tmp << p2;
+		fc_a = tmp.str();
                 break;
 
 	   case SQL_ARRAY:
@@ -502,14 +540,15 @@ int FBConnect::getColumn(unsigned char *p, int col)
                 this->BlobID.gds_quad_low  = bid.isc_quad_low;
 
                 sprintf(blob_s, "%08x:%08x", bid.isc_quad_high, bid.isc_quad_low);
-                sprintf((char *)p, "%17s", blob_s);
+                sprintf((char *)p2, "%17s", blob_s);
+                //sprintf((string *)p, "%17s", blob_s);
 		break;
 
 	        default:
-			printf("OK\n");
 			break;
 	    //case 
     }		
+
     if( dscale < 0 ) {
 
 		int tens = 1;;
@@ -518,14 +557,18 @@ int FBConnect::getColumn(unsigned char *p, int col)
 			tens *= 10;
 			if(value > 0)
 			{
-                        	sprintf ((char *)p, "%0*" "ll" "d.%0*" "ll" "d", this->FBCol[col].length - 1 + dscale, (ISC_INT64) (value / tens), -dscale, (ISC_INT64) (value % tens));
+                        	sprintf ((char *)p2, "%0*" "ll" "d.%0*" "ll" "d", this->FBCol[col].length - 1 + dscale, (ISC_INT64) (value / tens), -dscale, (ISC_INT64) (value % tens));
 			} // End if
 
 
 		} // End For
+
+		tmp << p2;
+		fc_a = tmp.str();
+    
     }
 		
-
+return fc_a;
 
 }
 
@@ -686,6 +729,9 @@ int FBConnect::getDataSize  (int col)
                 break;
             case SQL_TIMESTAMP:
 		len = this->FBCol[col].length;
+		//len = this->BufferSize;
+		//printf("VALOR ----> %d\n", len);
+		//exit(0);
                 break;
             case SQL_TYPE_DATE:
 		len = this->FBCol[col].length;
@@ -700,7 +746,7 @@ int FBConnect::getDataSize  (int col)
 		//len = 10;
 		break;
 	        default:
-			printf("OK\n");
+			//printf("OK\n");
 			break;
 		} // End switch
    return  len;
