@@ -147,7 +147,8 @@ int Commit          (void);
 int CommitRetaining (void);
 
 // SELECT COM RETORNO DE DADOS
-int getColumn(unsigned char *, int col);
+//int getColumn(unsigned char *, int col);
+string getColumn(int tam, int col);
 int getRow          (unsigned char *);
 int Fetch           (void);
 int getSize         (void);

@@ -204,13 +204,6 @@ int t006_Select (void) {
     printf ("SELECT STATEMENT OK!\n");
 
     int ret = db->Fetch (); // DADOS ALOCADO INTERNAMENTE
-/*
-    if (ret && ret != 100L) {
-        printf ("ERRO FETCH STATEMENT: %s\n", stmt);
-        delete (db);
-        db = NULL;
-        return 1; }    
-*/
 
     int intBlob;
     int tamanho;
@@ -225,7 +218,7 @@ int t006_Select (void) {
         memset (dados, '\0', tamanho);
 
        // O getColumn vai retornar os dados que estao nas tuplas ou, caso blob, retorna o blobID
-       db->getColumn (dados, 0);
+       db->getColumn (tamanho, 0);
 
 
 
@@ -256,16 +249,20 @@ int t006_Select (void) {
 				
    
 
+/*
 
     	tamanho = db->getDataSize(1);
 
     	unsigned char *dados1 = new unsigned char [tamanho];
+	string my_string;
 
     	memset (dados1, '\0', tamanho);
 
-    	db->getColumn (dados1, 1);
+    	my_string = db->getColumn (tamanho, 1);
 
-    	printf("TEXTO : [%s] \n", dados1);
+    	//printf("TEXTO : [%s] \n", dados1);
+	cout << my_string << endl;
+*/
 	ret = db->Fetch();
     } while (!ret);
 
@@ -286,6 +283,7 @@ int t006_Select (void) {
  *  is correct
  *  
  */
+/*
 int t007_SelectA (void) {
     printf ("\n--------------------------\n007_SelectA STATEMENT < 15    TEST\n");
     FBConnect *db = new FBConnect (FB30PATH, FB30USER, FB30PASS);
@@ -317,7 +315,7 @@ int t007_SelectA (void) {
     printf ("STATEMENT ERROR < 15 !\n");
     return -1;
 }
-
+*/
 /*
  *  Function t008_SelectB
  *
@@ -325,6 +323,7 @@ int t007_SelectA (void) {
  *  is correct
  *  
  */
+/*
 int t008_SelectB (void) {
     printf ("\n--------------------------\n008_SelectB AutoTransaction    TEST\n");
     FBConnect *db = new FBConnect (FB30PATH, FB30USER, FB30PASS);
@@ -363,12 +362,16 @@ int t008_SelectB (void) {
     db = NULL;
     return 0;
 }
+*/
+
 /*
  *  Function t009_SelectM
  *
  *  This function tests if we can get more
  *  that one field
  *  
+ */
+/*
  */
 int t009_SelectM (void) {
     printf ("\n--------------------------\n006_Select           TEST\n");
@@ -390,7 +393,17 @@ int t009_SelectM (void) {
         return 1; }    
     printf ("Read Transaction sucessfully started!\n");
 
-     const char *stmt= "SELECT FIRST_NAME, HIRE_DATE, SALARY  FROM EMPLOYEE";
+     //const char *stmt= "SELECT cust_NO FROM CUSTOMER"; // OK
+    const char *stmt= "SELECT hire_date FROM EMPLOYEE";
+     //const char *stmt= "SELECT FIRST_NAME, SALARY  FROM EMPLOYEE"; //OK
+    //const char *stmt= "SELECT MAX_SALARY FROM JOB"; // OK
+    //const char *stmt= "SELECT JOB_REQUIREMENT FROM JOB";
+    //const char *stmt= "SELECT * FROM JOB";
+    // const char *stmt= "SELECT CHANGE_DATE  FROM SALARY_HISTORY";
+    //const char *stmt= "SELECT EMP_NO  FROM EMPLOYEE_PROJECT"; //OK
+    //const char *stmt= "SELECT  CONTACT_FIRST, CONTACT_LAST, CITY   FROM CUSTOMER"; //OK
+    // const char *stmt= "SELECT  CONTACT_FIRST   FROM CUSTOMER"; // OK
+    // const char *stmt= "SELECT FIRST_NAME, HIRE_DATE, SALARY  FROM EMPLOYEE";  //OK
 
     if (db->Select (stmt)) {
         printf ("ERRO SELECT STATEMENT: %s\n", stmt);
@@ -411,26 +424,32 @@ int t009_SelectM (void) {
    
 	// Size needed to store the response
     	size0 = db->getDataSize(0);
-    	size1 = db->getDataSize(1);
-    	size2 = db->getDataSize(2);
+    	//size1 = db->getDataSize(1);
+    	//size2 = db->getDataSize(2);
 
 	// variable to store the data
         unsigned char *dados0 = new unsigned char [size0];
-        unsigned char *dados1 = new unsigned char [size1];
-        unsigned char *dados2 = new unsigned char [size2];
+        //unsigned char *dados1 = new unsigned char [size1];
+        //unsigned char *dados2 = new unsigned char [size2];
         memset (dados0, '\0', size0);
-        memset (dados1, '\0', size1);
-        memset (dados2, '\0', size2);
+        //memset (dados1, '\0', size1);
+        //memset (dados2, '\0', size2);
+	
+	string fbc_dado0;
 
-       // The getColumn return the data that is in the tuples if the field is a blob it returns blobid
-       db->getColumn (dados0, 0);
-       db->getColumn (dados1, 1);
-       db->getColumn (dados2, 2);
+    	fbc_dado0 = db->getColumn (size0, 0);
+
+    	//printf("TEXTO : [%s] \n", dados1);
+	cout << fbc_dado0 << endl;
+
+       //db->getColumn (dados0, 0);
+       //db->getColumn (dados1, 1);
+       //db->getColumn (dados0, 0);
 
 	
-       		printf("Field 0 : [%s] \n", dados0);
-       		printf("Field 1 : [%s] \n", dados1);
-       		printf("Field 2 : [%s] \n", dados2);
+       		//printf("Field 0 : [%s] \n", dados0);
+       		//printf("Field 1 : [%s] \n", dados1);
+       		//printf("Field 2 : [%s] \n", dados2);
 				
 	ret = db->Fetch();
 
@@ -462,10 +481,11 @@ int main (int argc, char* argv[]) {
     
     if (t005_SelectUT())  { printf ("\n005_SelectUT   FAIL\n--------------------------\n\n"); return 0; }
     else                    printf ("\n005_SelectUT   PASS\n--------------------------\n\n");
-*/
+
     if (t006_Select()    ){ printf ("\n006_Select     FAIL\n--------------------------\n\n"); return 0; }
     else                    printf ("\n006_Select     PASS\n--------------------------\n\n");
-/*
+    
+
     if (t007_SelectA()   ){ printf ("\n006_SelectA    FAIL\n--------------------------\n\n"); return 0; }
     else                    printf ("\n006_SelectA    PASS\n--------------------------\n\n");
     
@@ -474,10 +494,12 @@ int main (int argc, char* argv[]) {
     if (t008_SelectB()   ){ printf ("\n008_SelectB    FAIL\n--------------------------\n\n"); return 0; }
     else                    printf ("\n008_SelectB    PASS\n--------------------------\n\n");
     
-    
+   */ 
     if (t009_SelectM()   ){ printf ("\n009_SelectB    FAIL\n--------------------------\n\n"); return 0; }
     else                    printf ("\n009_SelectB    PASS\n--------------------------\n\n");
-    retun 0;
+   
+    return 0;
+    /*
 */    
 }    
 
