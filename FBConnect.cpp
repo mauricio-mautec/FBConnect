@@ -222,7 +222,7 @@ int FBConnect::Prepare (const char *stmt)
         switch (t) {
         case SQL_VARYING:
         case SQL_TEXT:
-           //printf ("TEXT OR VARYING\n");            
+          // printf ("TEXT OR VARYING\n");            
             this->BUILDER->setType (&status, i, SQL_TEXT);
             break;
         case SQL_SHORT:
@@ -246,7 +246,7 @@ int FBConnect::Prepare (const char *stmt)
             this->BUILDER->setType (&status, i, SQL_DOUBLE);
             break;                             
         case SQL_TIMESTAMP:                    
-            //printf ("TIMESTAMP      \n");            
+           // printf ("TIMESTAMP      \n");            
             this->BUILDER->setType (&status, i, SQL_TIMESTAMP);
             break;                             
         case SQL_TYPE_DATE:                    
@@ -444,15 +444,13 @@ string FBConnect::getColumn(int tam, int col)
     stringstream tmp;
     // return string
     string fc_a;	
-
+    short     field_width = 0;
     ISC_INT64 value;
     switch (t)
     {
 	    case SQL_TEXT:
-    		//n = sprintf((char *)p, "%-*s",  this->FBCol[col].length, this->BufferData + this->FBCol[col].offset);
 		break;
 	    case SQL_VARYING:
-    		//n = sprintf((char *)p, "%-*s",  this->FBCol[col].length, this->BufferData + this->FBCol[col].offset);
     		n = sprintf((char *)p2, "%-*s",  this->FBCol[col].length, this->BufferData + this->FBCol[col].offset);
 		tmp << p2;
 		fc_a = tmp.str();
@@ -460,9 +458,10 @@ string FBConnect::getColumn(int tam, int col)
 		break;
 		
 	    case SQL_SHORT:
-		sprintf((char *)p2, "%d", *(short *) this->BufferData + this->FBCol[col].offset); 
+		sprintf((char *)p2, "%d", *(short *) ( this->BufferData + this->FBCol[col].offset)); 
 		tmp << p2;
 		fc_a = tmp.str();
+
 
 		break;
 		
@@ -475,7 +474,6 @@ string FBConnect::getColumn(int tam, int col)
 	    case SQL_INT64:
 		len = this->FBCol[col].length;
 		dscale = this->METAO->getScale (&status, col);
-		//ISC_INT64 value;
 		ISC_INT64 tens;
 
 	        value = 0;	
@@ -568,6 +566,8 @@ string FBConnect::getColumn(int tam, int col)
     
     }
 		
+
+
 return fc_a;
 
 }
