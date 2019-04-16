@@ -344,6 +344,23 @@ int FBConnect::Fetch(void)
 
 }
 
+
+int FBConnect::Rollback        (void)
+{
+    if (! this->InTrans || this->TRANSACTION == 0L) return -1;
+
+    ThrowStatusWrapper status(this->STATUS);
+    if (this->TRANSACTION != 0L) {
+	    this->TRANSACTION->rollback(&status);
+	    this->TRANSACTION = 0L;
+	    return 0;}
+    else {
+	   strcpy(this->ErrorMsg, "RollBack: Aborting Transaction");
+    return -25;}
+
+
+} 
+
 /* PUBLIC: GETSIZE
 ** RETURN BUFFERSIZE VALUE
 */
