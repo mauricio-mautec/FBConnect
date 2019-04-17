@@ -394,8 +394,11 @@ int t009_SelectM (void) {
     printf ("Read Transaction sucessfully started!\n");
 
      //const char *stmt= "SELECT cust_NO FROM CUSTOMER"; // OK
-    const char *stmt= "SELECT hire_date FROM EMPLOYEE";
-     //const char *stmt= "SELECT FIRST_NAME, SALARY  FROM EMPLOYEE"; //OK
+    const char *stmt= "SELECT hire_date, salary, job_grade FROM EMPLOYEE";
+    //const char *stmt= "SELECT  job_grade, salary, first_name FROM EMPLOYEE";
+    //const char *stmt= "SELECT job_grade, hire_date, salary FROM EMPLOYEE";
+    //const char *stmt= "SELECT job_grade FROM EMPLOYEE";
+     //const char *stmt= "SELECT SALARY  FROM EMPLOYEE"; //OK
     //const char *stmt= "SELECT MAX_SALARY FROM JOB"; // OK
     //const char *stmt= "SELECT JOB_REQUIREMENT FROM JOB";
     //const char *stmt= "SELECT * FROM JOB";
@@ -424,23 +427,29 @@ int t009_SelectM (void) {
    
 	// Size needed to store the response
     	size0 = db->getDataSize(0);
-    	//size1 = db->getDataSize(1);
-    	//size2 = db->getDataSize(2);
+    	size1 = db->getDataSize(1);
+    	size2 = db->getDataSize(2);
 
 	// variable to store the data
-        unsigned char *dados0 = new unsigned char [size0];
+        //unsigned char *dados0 = new unsigned char [size0];
         //unsigned char *dados1 = new unsigned char [size1];
         //unsigned char *dados2 = new unsigned char [size2];
-        memset (dados0, '\0', size0);
+        //memset (dados0, '\0', size0);
         //memset (dados1, '\0', size1);
         //memset (dados2, '\0', size2);
 	
 	string fbc_dado0;
+	string fbc_dado1;
+	string fbc_dado2;
 
     	fbc_dado0 = db->getColumn (size0, 0);
+    	fbc_dado1 = db->getColumn (size1, 1);
+    	fbc_dado2 = db->getColumn (size2, 2);
 
     	//printf("TEXTO : [%s] \n", dados1);
 	cout << fbc_dado0 << endl;
+	cout << fbc_dado1 << endl;
+	cout << fbc_dado2 << endl;
 
        //db->getColumn (dados0, 0);
        //db->getColumn (dados1, 1);
