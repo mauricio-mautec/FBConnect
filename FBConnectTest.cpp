@@ -860,6 +860,102 @@ int t012_ExecuteBindAndBlobWrite (void) {
     return (blobLido == novoBlob) ? 0 : 1;
 }
 
+/*
+ *  Function t013_NewUtilities
+ *
+ *  Tests Ping, Reconnect, SelectBind, Column-by-name, Typed Getters,
+ *  getRowMap/getRowVector, ExecuteBatch, getAffectedRows, RETURNING, and getNextSequence
+ */
+int t013_NewUtilities (void) {
+    printf ("\n--------------------------\n013_NewUtilities TEST\n");
+    FBConnect *db = new FBConnect (FB30PATH, FB30USER, FB30PASS);
+    if (! db->Connected) {
+        printf ("ERROR CONNECTION %s\n", db->ErrorMsg);
+        delete (db);
+        return 1;
+    }
+
+    // 1. Ping & Reconnect
+    if (!db->Ping()) {
+        printf ("ERRO Ping\n");
+        delete (db);
+        return 1;
+    }
+    if (db->Reconnect() != 0 || !db->Ping()) {
+        printf ("ERRO Reconnect: %s\n", db->ErrorMsg);
+        delete (db);
+        return 1;
+    }
+    printf ("Ping & Reconnect OK!\n");
+
+    // 2. Sequence / Generator
+    db->Start(FBWRITE);
+    db->Execute("RECREATE SEQUENCE SEQ_TESTE START WITH 100");
+    db->Commit();
+    int64_t seq1 = db->getNextSequence("SEQ_TESTE", 1);
+    int64_t seq2 = db->getNextSequence("SEQ_TESTE", 5);
+    printf ("Sequence SEQ_TESTE: %lld -> %lld\n", (long long)seq1, (long long)seq2);
+    if (seq1 != 100 || seq2 != 105) {
+        delete (db);
+        return 1;
+    }
+
+    // 3. ExecuteBatch + getAffectedRows
+    vector<vector<string>> batchRows = {
+        { "2001", "Alfa Tech", "Bruno", "Dias", "+55-11-91111-2001", "Santos", "Brazil" },
+        { "2002", "Beta Cloud", "Carla", "Melo", "+55-21-92222-2002", "Niteroi", "Brazil" },
+        { "2003", "Gama Data", "Daniel", "Paz", "+55-31-93333-2003", "Uberlandia", "Brazil" }
+    };
+    db->Start(FBWRITE);
+    int batchCount = db->ExecuteBatch(
+        "INSERT INTO CUSTOMER (CUST_NO, CUSTOMER, CONTACT_FIRST, CONTACT_LAST, PHONE_NO, CITY, COUNTRY) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        batchRows
+    );
+    printf ("ExecuteBatch inseriu %d linhas (getAffectedRows = %llu)\n",
+            batchCount, (unsigned long long)db->getAffectedRows());
+    db->Commit();
+    if (batchCount != 3 || db->getAffectedRows() != 3) {
+        delete (db);
+        return 1;
+    }
+
+    // 4. SelectBind + acesso por nome de coluna + Getters tipados + getRowMap
+    const char *bindParams[] = { "621", "10000.00" };
+    if (db->SelectBind("SELECT EMP_NO, FIRST_NAME, LAST_NAME, SALARY FROM EMPLOYEE WHERE DEPT_NO = ? AND SALARY >= ? ORDER BY EMP_NO",
+                       bindParams, 2) != 0) {
+        printf ("ERRO SelectBind: %s\n", db->ErrorMsg);
+        delete (db);
+        return 1;
+    }
+
+    while (db->Fetch() == 0) {
+        long empNo    = db->getInt("EMP_NO");
+        string nome   = db->getColumn("FIRST_NAME") + " " + db->getColumn("LAST_NAME");
+        double salary = db->getDouble("SALARY");
+        map<string, string> rowMap = db->getRowMap();
+        printf ("SelectBind Row: EMP_NO=%ld | Nome=%s | Salary=%.2f | Map[FIRST_NAME]=%s\n",
+                empNo, nome.c_str(), salary, rowMap["FIRST_NAME"].c_str());
+    }
+    db->Commit();
+
+    // 5. UPDATE ... RETURNING no Firebird 5.x via SelectBind
+    const char *updParams[] = { "2001" };
+    db->Start(FBWRITE);
+    if (db->SelectBind("UPDATE CUSTOMER SET CITY = 'Campinas' WHERE CUST_NO = ? RETURNING CUST_NO, CUSTOMER, CITY",
+                       updParams, 1) != 0 || db->Fetch() != 0) {
+        printf ("ERRO UPDATE RETURNING: %s\n", db->ErrorMsg);
+        db->Rollback();
+        delete (db);
+        return 1;
+    }
+    printf ("UPDATE RETURNING: CUST_NO=%ld | CUSTOMER=%s | NEW_CITY=%s\n",
+            db->getInt("CUST_NO"), db->getColumn("CUSTOMER").c_str(), db->getColumn("CITY").c_str());
+    db->Commit();
+
+    delete (db);
+    return 0;
+}
+
 int main (int argc, char* argv[]) {
      (void)argc;
      (void)argv;
@@ -900,6 +996,9 @@ int main (int argc, char* argv[]) {
 
     if (t012_ExecuteBindAndBlobWrite()){ printf ("\n012_ExecuteBindAndBlobWrite FAIL\n--------------------------\n\n"); return 1; }
     else                                 printf ("\n012_ExecuteBindAndBlobWrite PASS\n--------------------------\n\n");
+
+    if (t013_NewUtilities()){ printf ("\n013_NewUtilities FAIL\n--------------------------\n\n"); return 1; }
+    else                      printf ("\n013_NewUtilities PASS\n--------------------------\n\n");
    
     return 0;
 }    

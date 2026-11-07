@@ -1,6 +1,8 @@
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <stdio.h>
+#include <ctype.h>
 #include <unistd.h>
 #include <sys/time.h>
 #include <syslog.h>
@@ -12,58 +14,79 @@
 using namespace std;
 static IMaster *Master = fb_get_master_interface();
 
+static bool isDmlReturningStmt(const char *stmt)
+{
+    if (!stmt) return false;
+    while (*stmt && isspace((unsigned char)*stmt)) stmt++;
+    return (strncasecmp(stmt, "INSERT", 6) == 0 ||
+            strncasecmp(stmt, "UPDATE", 6) == 0 ||
+            strncasecmp(stmt, "DELETE", 6) == 0 ||
+            strncasecmp(stmt, "MERGE",  5) == 0);
+}
+
 FBConnect::FBConnect (const char * banco, const char * user, const char * senha, const char * charset)
 {
-
-    this->TPB_RO      = NULL; 
-    this->TPB_RW      = NULL;
-    this->STATUS      = NULL; 
-    this->PROVIDER    = NULL;
-    this->ATTATCHMENT = NULL;
-    this->UTIL        = NULL;
-    this->CURSOR      = NULL;
-    this->METAI       = NULL;
-    this->METAO       = NULL;
-    this->BUILDER     = NULL;
-    this->STATEMENT   = NULL;
-    this->FBCol       = NULL;
-    this->BufferData  = NULL;
-    this->blob        = NULL;
-    this->TRANSACTION = NULL;
-    this->BufferSize  = 0;
-
-    this->STATUS   = Master->getStatus();
-    this->PROVIDER = Master->getDispatcher();
-    this->UTIL     = Master->getUtilInterface();
-    this->FCount   = 0;
-    this->InTrans  = false;
-    this->Connected = false;
-    this->isFetchOK = false;
-    this->Status    = NOTOK;
-    this->BlobNumChar = 0;
+    this->TPB_RO       = NULL; 
+    this->TPB_RW       = NULL;
+    this->STATUS       = NULL; 
+    this->PROVIDER     = NULL;
+    this->ATTATCHMENT  = NULL;
+    this->UTIL         = NULL;
+    this->CURSOR       = NULL;
+    this->METAI        = NULL;
+    this->METAO        = NULL;
+    this->BUILDER      = NULL;
+    this->STATEMENT    = NULL;
+    this->FBCol        = NULL;
+    this->BufferData   = NULL;
+    this->blob         = NULL;
+    this->TRANSACTION  = NULL;
+    this->BufferSize   = 0;
+    this->FCount       = 0;
+    this->AffectedRows = 0;
+    this->InTrans      = false;
+    this->Connected    = false;
+    this->isFetchOK    = false;
+    this->Status       = NOTOK;
+    this->BlobNumChar  = 0;
     memset(&this->BlobID, 0, sizeof(this->BlobID));
     memset(this->BlobSegment, 0, sizeof(this->BlobSegment));
     memset(this->ErrorMsg, 0, sizeof(this->ErrorMsg));
-  
+
+    this->dbPath    = banco   ? banco   : "";
+    this->dbUser    = user    ? user    : "";
+    this->dbPass    = senha   ? senha   : "";
+    this->dbCharset = charset ? charset : "UTF8";
+
+    this->connectInternal();
+
+    printf ("FBCONNECT VERSAO: %.1f (Firebird 5.x)\n", FBCONNECT_VERSAO);
+}
+
+int FBConnect::connectInternal (void)
+{
+    this->STATUS   = Master->getStatus();
+    this->PROVIDER = Master->getDispatcher();
+    this->UTIL     = Master->getUtilInterface();
+
     ThrowStatusWrapper status(this->STATUS);
 
     IXpbBuilder* dpb = NULL;
     dpb = this->UTIL->getXpbBuilder (&status, IXpbBuilder::DPB, NULL, 0);
     
-    dpb->insertString (&status, isc_dpb_user_name, user);
-    dpb->insertString (&status, isc_dpb_password, senha);
-    if (charset && charset[0] != '\0') {
-        dpb->insertString (&status, isc_dpb_lc_ctype, charset);
+    dpb->insertString (&status, isc_dpb_user_name, this->dbUser.c_str());
+    dpb->insertString (&status, isc_dpb_password, this->dbPass.c_str());
+    if (!this->dbCharset.empty()) {
+        dpb->insertString (&status, isc_dpb_lc_ctype, this->dbCharset.c_str());
     }
-    // Firebird 5.x native server-side binding for extended types (INT128, DECFLOAT, TIME ZONE)
     dpb->insertString (&status, isc_dpb_set_bind,
                        "INT128 TO VARCHAR; DECFLOAT TO VARCHAR; TIME ZONE TO VARCHAR");
 
     try { 
         this->ATTATCHMENT = this->PROVIDER->attachDatabase (&status, 
-                                                              banco, 
-                                      dpb->getBufferLength(&status),
-                                            dpb->getBuffer(&status));
+                                                            this->dbPath.c_str(), 
+                                                            dpb->getBufferLength(&status),
+                                                            dpb->getBuffer(&status));
         dpb->dispose();
         dpb = NULL;
 
@@ -80,7 +103,7 @@ FBConnect::FBConnect (const char * banco, const char * user, const char * senha,
         this->TPB_RW->insertTag (&status, isc_tpb_rec_version);
         this->TPB_RW->insertTag (&status, isc_tpb_wait);
         this->TPB_RW->insertTag (&status, isc_tpb_write);
-        
+
         // Configura sessao Firebird 5.x para converter tipos estendidos (INT128, DECFLOAT, TIME ZONE)
         ITransaction* initTr = this->ATTATCHMENT->startTransaction(&status,
                                    this->TPB_RW->getBufferLength(&status),
@@ -92,6 +115,7 @@ FBConnect::FBConnect (const char * banco, const char * user, const char * senha,
 
         this->Connected = true;
         this->Status    = OK;
+        return 0;
     }
     catch (const FbException& error) {                                                                                                                                         
         char buf[354];                                                                                                                            
@@ -114,10 +138,8 @@ FBConnect::FBConnect (const char * banco, const char * user, const char * senha,
         this->ATTATCHMENT = NULL;
         this->STATEMENT   = NULL;
         this->UTIL        = NULL;
-
+        return -1;
     }
-
-    printf ("FBCONNECT VERSAO: %.1f (Firebird 5.x)\n", FBCONNECT_VERSAO);
 }
 
 void FBConnect::closeQueryResources (IStatus *status)
@@ -175,6 +197,45 @@ FBConnect::~FBConnect()
     this->InTrans     = false;
     this->Connected   = false;
     printf ("DESTRUCTOR OK\n");
+}
+
+bool FBConnect::Ping (void)
+{
+    if (!this->Connected || !this->ATTATCHMENT || !this->STATUS) return false;
+    ThrowStatusWrapper status(this->STATUS);
+    try {
+        this->ATTATCHMENT->ping(&status);
+        return true;
+    }
+    catch (const FbException &error) {
+        this->UTIL->formatStatus(this->ErrorMsg, sizeof(this->ErrorMsg), error.getStatus());
+        return false;
+    }
+}
+
+int FBConnect::Reconnect (void)
+{
+    if (this->STATUS) {
+        this->closeQueryResources(this->STATUS);
+        ThrowStatusWrapper status(this->STATUS);
+        try {
+            if (this->TRANSACTION) { this->TRANSACTION->rollback(&status); this->TRANSACTION = NULL; }
+            if (this->ATTATCHMENT) { this->ATTATCHMENT->detach(&status);   this->ATTATCHMENT = NULL; }
+        }
+        catch (const FbException&) {
+            if (this->TRANSACTION) { this->TRANSACTION->release(); this->TRANSACTION = NULL; }
+            if (this->ATTATCHMENT) { this->ATTATCHMENT->release(); this->ATTATCHMENT = NULL; }
+        }
+    }
+    if (this->ATTATCHMENT) { this->ATTATCHMENT->release(); this->ATTATCHMENT = NULL; }
+    if (this->PROVIDER)    { this->PROVIDER->release();    this->PROVIDER = NULL; }
+    if (this->TPB_RO)      { this->TPB_RO->dispose();      this->TPB_RO = NULL; }
+    if (this->TPB_RW)      { this->TPB_RW->dispose();      this->TPB_RW = NULL; }
+    if (this->STATUS)      { this->STATUS->dispose();      this->STATUS = NULL; }
+    this->InTrans   = false;
+    this->Connected = false;
+
+    return this->connectInternal();
 }
 
 // INICIA UMA TRANSACAO RO/RW
@@ -250,6 +311,109 @@ int FBConnect::CommitRetaining (void)
     }
 }
 
+int FBConnect::setupOutputMetadata (IStatus *rawStatus)
+{
+    ThrowStatusWrapper status(rawStatus);
+
+    this->METAO    = this->STATEMENT->getOutputMetadata (&status);
+    this->BUILDER  = this->METAO->getBuilder            (&status);
+    this->FCount   = this->METAO->getCount              (&status);
+    this->FBCol    = new FBCOL [this->FCount];
+
+    memset (this->FBCol, 0 , sizeof (FBCOL) * this->FCount);
+
+    for (unsigned i = 0; i < this->FCount; ++i) {
+        this->FBCol[i].name = this->METAO->getField (&status, i);
+        unsigned sub = 1;
+        unsigned t   = this->METAO->getType (&status, i);
+        this->FBCol[i].typeData = t;
+        switch (t) {
+        case SQL_VARYING:
+            this->BUILDER->setType (&status, i, SQL_VARYING);
+            break;
+        case SQL_TEXT:
+            this->BUILDER->setType (&status, i, SQL_TEXT);
+            break;
+        case SQL_SHORT:
+            this->BUILDER->setType (&status, i, SQL_SHORT);
+            break;
+        case SQL_LONG:
+            this->BUILDER->setType (&status, i, SQL_LONG);
+            break;                              
+        case SQL_INT64:                         
+            this->BUILDER->setType (&status, i, SQL_INT64);
+            break;
+        case SQL_FLOAT:
+            this->BUILDER->setType (&status, i, SQL_FLOAT);
+            break;                             
+        case SQL_DOUBLE:                       
+            this->BUILDER->setType (&status, i, SQL_DOUBLE);
+            break;                             
+        case SQL_TIMESTAMP:                    
+            this->BUILDER->setType (&status, i, SQL_TIMESTAMP);
+            break;                             
+        case SQL_TYPE_DATE:                    
+            this->BUILDER->setType (&status, i, SQL_TYPE_DATE);
+            break;
+        case SQL_TYPE_TIME:
+            this->BUILDER->setType (&status, i, SQL_TYPE_TIME);
+            break;                             
+        case SQL_BLOB:                         
+            this->BUILDER->setType (&status, i, SQL_BLOB);
+            sub = this->METAO->getSubType(&status, i); 
+            this->FBCol[i].subData = sub;
+            break;                             
+        case SQL_ARRAY:                        
+            this->BUILDER->setType (&status, i, SQL_ARRAY);
+            break;                               
+        case SQL_BOOLEAN:
+            this->BUILDER->setType (&status, i, SQL_BOOLEAN);
+            break;
+        case SQL_INT128:
+        case SQL_DEC16:
+        case SQL_DEC34:
+        case SQL_TIME_TZ:
+        case SQL_TIMESTAMP_TZ:
+        case SQL_TIME_TZ_EX:
+        case SQL_TIMESTAMP_TZ_EX:
+            this->BUILDER->setType (&status, i, SQL_VARYING);
+            this->BUILDER->setLength (&status, i, 64);
+            this->FBCol[i].typeData = SQL_VARYING;
+            break;
+        default:
+            return -1;
+        }
+    }
+
+    this->METAO->release();
+    this->METAO   = this->BUILDER->getMetadata (&status);
+    this->BUILDER->release();
+    this->BUILDER = NULL;
+
+    for (unsigned i = 0; i < this->FCount; ++i) {
+        if (FBCol[i].name)
+        {
+            this->FBCol[i].length     = this->METAO->getLength     (&status, i);
+            this->FBCol[i].offset     = this->METAO->getOffset     (&status, i);
+            this->FBCol[i].nullOffset = this->METAO->getNullOffset (&status, i);
+        }
+    }
+
+    this->BufferSize = this->METAO->getMessageLength (&status);
+    if (! this->BufferSize) {
+        snprintf (this->ErrorMsg, sizeof(this->ErrorMsg), "BUFFER SIZE IS ZERO");
+        return -1;
+    }
+
+    this->BufferData = new unsigned char [this->BufferSize + 1];
+    if (this->BufferData == NULL) {
+        snprintf (this->ErrorMsg, sizeof(this->ErrorMsg), "UNABLE TO ALLOCATE BUFFER");
+        return -1;
+    }
+    memset(this->BufferData, 0, this->BufferSize + 1);
+    return 0;
+}
+
 /* PRIVATE: PREPARE
 ** PREPARA CAMPOS DE RETORNO
 ** DOS DADOS SOLICITADOS NO STATEMENT
@@ -267,129 +431,19 @@ int FBConnect::Prepare (const char *stmt)
                                             this->TRANSACTION,
                                                             0,
                                                          stmt, 
-                                               SAMPLES_DIALECT, //SQL_DIALECT_V6,
+                                               SAMPLES_DIALECT,
                          IStatement::PREPARE_PREFETCH_METADATA);
-    }
-    catch (const FbException &error) {
-        this->UTIL->formatStatus (this->ErrorMsg, sizeof (this->ErrorMsg), error.getStatus());
-        return -1;
-    }
 
-   // GETOUTPUT METADATA
-
-    try {
-        // NUMBER OF COLUMNS, NAMES AND DATA TYPES
-        this->METAO    = this->STATEMENT->getOutputMetadata (&status);
-        this->BUILDER  = this->METAO->getBuilder            (&status);
-        this->FCount   = this->METAO->getCount              (&status);
-        this->FBCol    = new FBCOL [this->FCount];
-
-        memset (this->FBCol, 0 , sizeof (FBCOL) * this->FCount);
-
-        for (unsigned i = 0; i < this->FCount; ++i) {
-            this->FBCol[i].name = this->METAO->getField (&status, i);
-            unsigned sub = 1;
-            unsigned t   = this->METAO->getType (&status, i);
-            this->FBCol[i].typeData = t;
-            switch (t) {
-            case SQL_VARYING:
-                this->BUILDER->setType (&status, i, SQL_VARYING);
-                break;
-            case SQL_TEXT:
-                this->BUILDER->setType (&status, i, SQL_TEXT);
-                break;
-            case SQL_SHORT:
-                this->BUILDER->setType (&status, i, SQL_SHORT);
-                break;
-            case SQL_LONG:
-                this->BUILDER->setType (&status, i, SQL_LONG);
-                break;                              
-            case SQL_INT64:                         
-                this->BUILDER->setType (&status, i, SQL_INT64);
-                break;
-            case SQL_FLOAT:
-                this->BUILDER->setType (&status, i, SQL_FLOAT);
-                break;                             
-            case SQL_DOUBLE:                       
-                this->BUILDER->setType (&status, i, SQL_DOUBLE);
-                break;                             
-            case SQL_TIMESTAMP:                    
-                this->BUILDER->setType (&status, i, SQL_TIMESTAMP);
-                break;                             
-            case SQL_TYPE_DATE:                    
-                this->BUILDER->setType (&status, i, SQL_TYPE_DATE);
-                break;
-            case SQL_TYPE_TIME:
-                this->BUILDER->setType (&status, i, SQL_TYPE_TIME);
-                break;                             
-            case SQL_BLOB:                         
-                this->BUILDER->setType (&status, i, SQL_BLOB);
-                sub = this->METAO->getSubType(&status, i); 
-                this->FBCol[i].subData = sub;
-                break;                             
-            case SQL_ARRAY:                        
-                this->BUILDER->setType (&status, i, SQL_ARRAY);
-                break;                               
-            case SQL_BOOLEAN:
-                this->BUILDER->setType (&status, i, SQL_BOOLEAN);
-                break;
-            case SQL_INT128:
-            case SQL_DEC16:
-            case SQL_DEC34:
-            case SQL_TIME_TZ:
-            case SQL_TIMESTAMP_TZ:
-            case SQL_TIME_TZ_EX:
-            case SQL_TIMESTAMP_TZ_EX:
-                // Firebird 5.x extended types: coerce to SQL_VARYING if not already bound by DPB
-                this->BUILDER->setType (&status, i, SQL_VARYING);
-                this->BUILDER->setLength (&status, i, 64);
-                this->FBCol[i].typeData = SQL_VARYING;
-                break;
-            default:
-                return -1;
-            }                                        
-            
-        }                                          
-
-        // FREE METADATA, BUILDER
-        // RECEIVE NOVAMENTE AGAIN WITH 
-        // DEFINED FIELDS
-        this->METAO->release();
-        this->METAO   = this->BUILDER->getMetadata (&status);
-        this->BUILDER->release();
-        this->BUILDER = NULL;
-
-        for (unsigned i = 0; i < this->FCount; ++i) {
-            if (FBCol[i].name)
-            {
-                this->FBCol[i].length     = this->METAO->getLength     (&status, i);
-                this->FBCol[i].offset     = this->METAO->getOffset     (&status, i);
-                this->FBCol[i].nullOffset = this->METAO->getNullOffset (&status, i);
-            }
+        if (this->setupOutputMetadata(this->STATUS) != 0) {
+            return -1;
         }
 
-        // OPEN CURSOR
-        // ALLOCATE BUFFER, SET BUFFERDATA, BUFFERSIZE
-        this->CURSOR     = this->STATEMENT->openCursor (&status, this->TRANSACTION, NULL , NULL, this->METAO, 0);
-        this->BufferSize = this->METAO->getMessageLength (&status);
+        this->CURSOR = this->STATEMENT->openCursor (&status, this->TRANSACTION, NULL, NULL, this->METAO, 0);
     }
     catch (const FbException &error) {
         this->UTIL->formatStatus (this->ErrorMsg, sizeof (this->ErrorMsg), error.getStatus());
         return -1;
     }
-
-    if (! this->BufferSize) {
-        snprintf (this->ErrorMsg, sizeof(this->ErrorMsg), "BUFFER SIZE IS ZERO");
-        return -1;
-    }
-   
-    this->BufferData = new unsigned char [this->BufferSize + 1];
-    if (this->BufferData == NULL)  {
-        snprintf (this->ErrorMsg, sizeof(this->ErrorMsg), "UNABLE TO ALLOCATE BUFFER");
-        return -1;
-
-    }
-    memset(this->BufferData, 0, this->BufferSize + 1);
 
     return 0;
 }
@@ -481,6 +535,13 @@ string FBConnect::getColumn(int col)
     return this->getColumn(0, col);
 }
 
+string FBConnect::getColumn(const char *colName)
+{
+    int idx = this->getColumnIndex(colName);
+    if (idx < 0) return "";
+    return this->getColumn(0, idx);
+}
+
 string FBConnect::getColumn(int tam, int col)
 {
     (void)tam;
@@ -517,7 +578,6 @@ string FBConnect::getColumn(int tam, int col)
     {
         case SQL_VARYING:
         {
-            // Em SQL_VARYING do Firebird, os 2 primeiros bytes (uint16_t) contem o tamanho exato em bytes
             uint16_t strLen = *(const uint16_t *)colPtr;
             if (strLen > this->FBCol[col].length) {
                 strLen = (uint16_t)this->FBCol[col].length;
@@ -528,7 +588,6 @@ string FBConnect::getColumn(int tam, int col)
 
         case SQL_TEXT:
         {
-            // Em SQL_TEXT (CHAR(N)) com UTF8, o Firebird preenche ate 4*N bytes com espacos
             const char *raw = (const char *)colPtr;
             unsigned len = this->FBCol[col].length;
             while (len > 0 && raw[len - 1] == ' ') {
@@ -646,37 +705,111 @@ string FBConnect::getColumn(int tam, int col)
     return fc_a;
 }
 
+/* TYPED GETTERS */
+long FBConnect::getInt(int col)
+{
+    return (long)this->getInt64(col);
+}
+
+long FBConnect::getInt(const char *colName)
+{
+    return (long)this->getInt64(this->getColumnIndex(colName));
+}
+
+int64_t FBConnect::getInt64(int col)
+{
+    if (this->isNull(col)) return 0;
+    string s = this->getColumn(col);
+    if (s.empty() || s == "-1") return 0;
+    return (int64_t)strtoll(s.c_str(), NULL, 10);
+}
+
+int64_t FBConnect::getInt64(const char *colName)
+{
+    return this->getInt64(this->getColumnIndex(colName));
+}
+
+double FBConnect::getDouble(int col)
+{
+    if (this->isNull(col)) return 0.0;
+    string s = this->getColumn(col);
+    if (s.empty() || s == "-1") return 0.0;
+    return strtod(s.c_str(), NULL);
+}
+
+double FBConnect::getDouble(const char *colName)
+{
+    return this->getDouble(this->getColumnIndex(colName));
+}
+
+bool FBConnect::getBool(int col)
+{
+    if (this->isNull(col)) return false;
+    string s = this->getColumn(col);
+    return (s == "true" || s == "TRUE" || s == "1" || s == "T" || s == "Y");
+}
+
+bool FBConnect::getBool(const char *colName)
+{
+    return this->getBool(this->getColumnIndex(colName));
+}
+
+/* STRUCTURED ROW GETTERS */
+vector<string> FBConnect::getRowVector(void)
+{
+    vector<string> row;
+    if (!this->InTrans || !this->BufferData || !this->isFetchOK) return row;
+    row.reserve(this->FCount);
+    for (unsigned i = 0; i < this->FCount; ++i) {
+        row.push_back(this->getColumn((int)i));
+    }
+    return row;
+}
+
+map<string, string> FBConnect::getRowMap(void)
+{
+    map<string, string> row;
+    if (!this->InTrans || !this->BufferData || !this->isFetchOK) return row;
+    for (unsigned i = 0; i < this->FCount; ++i) {
+        const char *name = this->getColumnName((int)i);
+        string key = (name && name[0] != '\0') ? name : ("COL_" + to_string(i));
+        row[key] = this->getColumn((int)i);
+    }
+    return row;
+}
 
 /* PUBLIC: GETROW
 ** COPY FROM BUFFER TO USER VAR
 */
 int FBConnect::getRow (unsigned char *dados)
 {
-    (void)dados;
     if (! this->InTrans    ||   this->TRANSACTION == 0L) return -1;
     if (! this->BufferData || ! this->BufferSize)        return -1;
+    if (! this->isFetchOK)                               return -1;
 
+    string line;
     for (unsigned j = 0; j < this->FCount; ++j) {
-        printf("%s: %s\n", this->FBCol[j].name ? this->FBCol[j].name : "", this->getColumn(j).c_str());
+        if (j > 0) line += " | ";
+        line += this->getColumn((int)j);
     }
-
+    if (dados) {
+        strcpy((char *)dados, line.c_str());
+    }
     return 0;
 }
 
 /* PUBLIC : SELECT
-** SELECIONAR VARIAS LINHAS DE DADOS
+** SELECIONAR VARIAS LINHAS DE DADOS (INCLUINDO DML COM RETURNING NO FB 5.x)
 */
 int FBConnect::Select (const char *stmt)
 {
-    // 0. VERIFICA STATMENT
     if (!stmt || strlen (stmt) < 15) { 
         snprintf (this->ErrorMsg, sizeof(this->ErrorMsg), "FBConnect::Select: VERIFY STATMENT LESS THAN 15 CHARS");
         return -1;
     }
 
-    // 1. VERIFICA STATUS DA TRANSACAO E PREPARA STATEMENT
-    // Iniciar automaticamente uma transacao
-    if (! this->InTrans && this->Start (FBREAD)) return -1;
+    char txMode = isDmlReturningStmt(stmt) ? FBWRITE : FBREAD;
+    if (! this->InTrans && this->Start (txMode)) return -1;
     
     if (this->Prepare (stmt)) {
         if (this->ErrorMsg[0] == '\0') {
@@ -690,6 +823,100 @@ int FBConnect::Select (const char *stmt)
     return 0;
 }
 
+/* PUBLIC : SELECTBIND
+** SELECT PARAMETRIZADO COM ? (PROTECAO CONTRA SQL INJECTION E SUPORTE A RETURNING)
+*/
+int FBConnect::SelectBind (const char *stmt, const char **dados, int dimensao)
+{
+    if (!stmt || strlen(stmt) < 15 || !dados || dimensao <= 0) {
+        snprintf(this->ErrorMsg, sizeof(this->ErrorMsg), "FBConnect::SelectBind: INVALID ARGUMENTS");
+        return -1;
+    }
+
+    char txMode = isDmlReturningStmt(stmt) ? FBWRITE : FBREAD;
+    if (!this->InTrans && this->Start(txMode)) return -1;
+
+    ThrowStatusWrapper status(this->STATUS);
+    this->closeQueryResources(this->STATUS);
+
+    IMessageMetadata *inMeta = NULL;
+    IMetadataBuilder *inBuilder = NULL;
+    unsigned char *inBuf = NULL;
+
+    try {
+        this->STATEMENT = this->ATTATCHMENT->prepare(&status,
+                                                     this->TRANSACTION,
+                                                     0,
+                                                     stmt,
+                                                     SAMPLES_DIALECT,
+                                                     IStatement::PREPARE_PREFETCH_METADATA);
+
+        inMeta = this->STATEMENT->getInputMetadata(&status);
+        unsigned paramCount = inMeta->getCount(&status);
+        if ((int)paramCount != dimensao) {
+            snprintf(this->ErrorMsg, sizeof(this->ErrorMsg),
+                     "FBConnect::SelectBind: EXPECTED %u PARAMS, GOT %d", paramCount, dimensao);
+            inMeta->release();
+            this->closeQueryResources(this->STATUS);
+            return -1;
+        }
+
+        inBuilder = inMeta->getBuilder(&status);
+        for (unsigned i = 0; i < paramCount; ++i) {
+            unsigned strLen = dados[i] ? (unsigned)strlen(dados[i]) : 1;
+            if (strLen == 0) strLen = 1;
+            inBuilder->setType(&status, i, SQL_TEXT);
+            inBuilder->setLength(&status, i, strLen);
+        }
+
+        inMeta->release();
+        inMeta = inBuilder->getMetadata(&status);
+        inBuilder->release();
+        inBuilder = NULL;
+
+        unsigned msgLen = inMeta->getMessageLength(&status);
+        inBuf = new unsigned char[msgLen];
+        memset(inBuf, 0, msgLen);
+
+        for (unsigned i = 0; i < paramCount; ++i) {
+            unsigned offset     = inMeta->getOffset(&status, i);
+            unsigned nullOffset = inMeta->getNullOffset(&status, i);
+            if (dados[i] == NULL) {
+                *(ISC_SHORT *)(inBuf + nullOffset) = -1;
+            } else {
+                *(ISC_SHORT *)(inBuf + nullOffset) = 0;
+                memcpy(inBuf + offset, dados[i], strlen(dados[i]));
+            }
+        }
+
+        if (this->setupOutputMetadata(this->STATUS) != 0) {
+            delete[] inBuf;
+            inMeta->release();
+            return -1;
+        }
+
+        this->CURSOR = this->STATEMENT->openCursor(&status, this->TRANSACTION, inMeta, inBuf, this->METAO, 0);
+
+        delete[] inBuf;
+        inMeta->release();
+        this->isFetchOK = true;
+        return 0;
+    }
+    catch (const FbException &error) {
+        this->UTIL->formatStatus(this->ErrorMsg, sizeof(this->ErrorMsg), error.getStatus());
+        if (inBuf)     delete[] inBuf;
+        if (inBuilder) inBuilder->release();
+        if (inMeta)    inMeta->release();
+        this->closeQueryResources(this->STATUS);
+        return -1;
+    }
+}
+
+int FBConnect::SelectBind (const char *stmt, char **dados, int dimensao)
+{
+    return this->SelectBind(stmt, (const char **)dados, dimensao);
+}
+
 int FBConnect::Execute (const char *stmt)
 {
     if (!stmt || strlen(stmt) == 0) {
@@ -700,23 +927,31 @@ int FBConnect::Execute (const char *stmt)
     if (!this->InTrans && this->Start(FBWRITE)) return -1;
 
     ThrowStatusWrapper status(this->STATUS);
+    this->AffectedRows = 0;
+    IStatement *stmtObj = NULL;
 
     try {
-        this->ATTATCHMENT->execute(&status,
-                                   this->TRANSACTION,
-                                   0,
-                                   stmt,
-                                   SAMPLES_DIALECT,
-                                   NULL,
-                                   NULL,
-                                   NULL,
-                                   NULL);
+        stmtObj = this->ATTATCHMENT->prepare(&status,
+                                             this->TRANSACTION,
+                                             0,
+                                             stmt,
+                                             SAMPLES_DIALECT,
+                                             0);
+        stmtObj->execute(&status, this->TRANSACTION, NULL, NULL, NULL, NULL);
+        this->AffectedRows = stmtObj->getAffectedRecords(&status);
+        stmtObj->free(&status);
         return 0;
     }
     catch (const FbException &error) {
         this->UTIL->formatStatus(this->ErrorMsg, sizeof(this->ErrorMsg), error.getStatus());
+        if (stmtObj) stmtObj->release();
         return -1;
     }
+}
+
+uint64_t FBConnect::getAffectedRows (void)
+{
+    return this->AffectedRows;
 }
 
 unsigned FBConnect::getCount (void)
@@ -728,6 +963,17 @@ const char* FBConnect::getColumnName (int col)
 {
     if (!this->FBCol || col < 0 || (unsigned)col >= this->FCount) return "";
     return this->FBCol[col].name ? this->FBCol[col].name : "";
+}
+
+int FBConnect::getColumnIndex (const char *colName)
+{
+    if (!colName || !this->FBCol) return -1;
+    for (unsigned i = 0; i < this->FCount; ++i) {
+        if (this->FBCol[i].name && strcasecmp(this->FBCol[i].name, colName) == 0) {
+            return (int)i;
+        }
+    }
+    return -1;
 }
 
 string FBConnect::getServerVersion (void)
@@ -753,6 +999,36 @@ string FBConnect::getServerVersion (void)
     return ver;
 }
 
+int64_t FBConnect::getNextSequence (const char *seqName, int step)
+{
+    if (!seqName || seqName[0] == '\0') return -1;
+    for (const char *p = seqName; *p; ++p) {
+        if (!isalnum((unsigned char)*p) && *p != '_' && *p != '$') {
+            snprintf(this->ErrorMsg, sizeof(this->ErrorMsg), "FBConnect::getNextSequence: INVALID SEQUENCE NAME");
+            return -1;
+        }
+    }
+
+    bool startedHere = false;
+    if (!this->InTrans) {
+        if (this->Start(FBREAD) != 0) return -1;
+        startedHere = true;
+    }
+
+    char sql[256];
+    snprintf(sql, sizeof(sql), "SELECT GEN_ID(%s, %d) FROM RDB$DATABASE", seqName, step);
+
+    int64_t val = -1;
+    if (this->Select(sql) == 0 && this->Fetch() == 0) {
+        val = this->getInt64(0);
+    }
+
+    if (startedHere) {
+        this->Commit();
+    }
+    return val;
+}
+
 int FBConnect::ExecuteBind (const char *stmt, const char **dados, int dimensao)
 {
     if (!stmt || strlen(stmt) == 0 || !dados || dimensao <= 0) {
@@ -763,6 +1039,7 @@ int FBConnect::ExecuteBind (const char *stmt, const char **dados, int dimensao)
     if (!this->InTrans && this->Start(FBWRITE)) return -1;
 
     ThrowStatusWrapper status(this->STATUS);
+    this->AffectedRows = 0;
     IStatement *stmtObj = NULL;
     IMessageMetadata *inMeta = NULL;
     IMetadataBuilder *inBuilder = NULL;
@@ -815,6 +1092,7 @@ int FBConnect::ExecuteBind (const char *stmt, const char **dados, int dimensao)
         }
 
         stmtObj->execute(&status, this->TRANSACTION, inMeta, inBuf, NULL, NULL);
+        this->AffectedRows = stmtObj->getAffectedRecords(&status);
 
         delete[] inBuf;
         inMeta->release();
@@ -834,6 +1112,97 @@ int FBConnect::ExecuteBind (const char *stmt, const char **dados, int dimensao)
 int FBConnect::ExecuteBind (const char *stmt, char **dados, int dimensao)
 {
     return this->ExecuteBind(stmt, (const char **)dados, dimensao);
+}
+
+int FBConnect::ExecuteBatch (const char *stmt, const vector<vector<string>> &rows)
+{
+    if (!stmt || strlen(stmt) == 0 || rows.empty()) {
+        snprintf(this->ErrorMsg, sizeof(this->ErrorMsg), "FBConnect::ExecuteBatch: INVALID ARGUMENTS");
+        return -1;
+    }
+
+    if (!this->InTrans && this->Start(FBWRITE)) return -1;
+
+    ThrowStatusWrapper status(this->STATUS);
+    this->AffectedRows = 0;
+    IStatement *stmtObj = NULL;
+    IMessageMetadata *inMeta = NULL;
+    IMetadataBuilder *inBuilder = NULL;
+    unsigned char *inBuf = NULL;
+
+    try {
+        stmtObj = this->ATTATCHMENT->prepare(&status,
+                                             this->TRANSACTION,
+                                             0,
+                                             stmt,
+                                             SAMPLES_DIALECT,
+                                             IStatement::PREPARE_PREFETCH_METADATA);
+
+        inMeta = stmtObj->getInputMetadata(&status);
+        unsigned paramCount = inMeta->getCount(&status);
+
+        vector<unsigned> maxLens(paramCount, 1);
+        for (size_t r = 0; r < rows.size(); ++r) {
+            if (rows[r].size() != paramCount) {
+                snprintf(this->ErrorMsg, sizeof(this->ErrorMsg),
+                         "FBConnect::ExecuteBatch: ROW %zu HAS %zu PARAMS, EXPECTED %u",
+                         r, rows[r].size(), paramCount);
+                inMeta->release();
+                stmtObj->free(&status);
+                return -1;
+            }
+            for (unsigned i = 0; i < paramCount; ++i) {
+                if (rows[r][i].size() > maxLens[i]) {
+                    maxLens[i] = (unsigned)rows[r][i].size();
+                }
+            }
+        }
+
+        inBuilder = inMeta->getBuilder(&status);
+        for (unsigned i = 0; i < paramCount; ++i) {
+            inBuilder->setType(&status, i, SQL_VARYING);
+            inBuilder->setLength(&status, i, maxLens[i]);
+        }
+
+        inMeta->release();
+        inMeta = inBuilder->getMetadata(&status);
+        inBuilder->release();
+        inBuilder = NULL;
+
+        unsigned msgLen = inMeta->getMessageLength(&status);
+        inBuf = new unsigned char[msgLen];
+
+        uint64_t totalAffected = 0;
+        for (size_t r = 0; r < rows.size(); ++r) {
+            memset(inBuf, 0, msgLen);
+            for (unsigned i = 0; i < paramCount; ++i) {
+                unsigned offset     = inMeta->getOffset(&status, i);
+                unsigned nullOffset = inMeta->getNullOffset(&status, i);
+                *(ISC_SHORT *)(inBuf + nullOffset) = 0;
+                uint16_t len = (uint16_t)rows[r][i].size();
+                *(uint16_t *)(inBuf + offset) = len;
+                if (len > 0) {
+                    memcpy(inBuf + offset + sizeof(uint16_t), rows[r][i].data(), len);
+                }
+            }
+            stmtObj->execute(&status, this->TRANSACTION, inMeta, inBuf, NULL, NULL);
+            totalAffected += stmtObj->getAffectedRecords(&status);
+        }
+
+        this->AffectedRows = totalAffected;
+        delete[] inBuf;
+        inMeta->release();
+        stmtObj->free(&status);
+        return (int)rows.size();
+    }
+    catch (const FbException &error) {
+        this->UTIL->formatStatus(this->ErrorMsg, sizeof(this->ErrorMsg), error.getStatus());
+        if (inBuf)     delete[] inBuf;
+        if (inBuilder) inBuilder->release();
+        if (inMeta)    inMeta->release();
+        if (stmtObj)   stmtObj->release();
+        return -1;
+    }
 }
 
 /* PUBLIC : GetTextBlob
@@ -965,6 +1334,7 @@ int FBConnect::SetTextBlob (const char *query, const char *texto, int bloblen)
         *(ISC_QUAD *)(inBuf + inMeta->getOffset(&status, 0)) = newBlobId;
 
         stmtObj->execute(&status, this->TRANSACTION, inMeta, inBuf, NULL, NULL);
+        this->AffectedRows = stmtObj->getAffectedRecords(&status);
 
         delete[] inBuf;
         inMeta->release();
@@ -1011,6 +1381,10 @@ int FBConnect::isNull(int col) {
 	if (!this->InTrans || !this->BufferData || !this->isFetchOK) return 0;
 	if (!this->FBCol || col < 0 || (unsigned)col >= this->FCount) return 0;
 	return (*(const ISC_SHORT *)(this->BufferData + this->FBCol[col].nullOffset) != 0) ? 1 : 0;
+}
+
+int FBConnect::isNull(const char *colName) {
+	return this->isNull(this->getColumnIndex(colName));
 }
 
 /*
