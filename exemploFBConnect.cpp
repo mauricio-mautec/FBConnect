@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <locale.h>
 #include <time.h>
 #include <vector>
@@ -672,6 +673,111 @@ static void telaDiagnostico( MauWin &status, FBConnect &db )
 }
 
 // ---------------------------------------------------------------------------
+// 7. EVENTOS EM TEMPO REAL (IAttachment::queEvents / IEventCallback / IEvents)
+static void telaEventosFirebird5( MauWin &status, FBConnect &db )
+{
+    MauWin evWin( 17, 70, 4, 5, 1 );
+    if ( evWin.errorCode ) return;
+    aplicaTema( evWin );
+    evWin.setTitulo( S( " EVENTOS NATIVOS DO FIREBIRD 5.0 (queEvents / IEventCallback)" ) );
+
+    std::vector<std::string> nomes = { "EVT_PEDIDO", "EVT_ALERTA" };
+
+    // Se a conexao padrao em 127.0.0.1 tiver a porta auxiliar bloqueada pelo NAT do Docker,
+    // tenta abrir conexao dedicada para eventos na bridge do container (172.18.0.3)
+    FBConnect *evDb = &db;
+    FBConnect *auxDb = NULL;
+    bool escutaAtiva = false;
+    if ( evDb->EventInit( nomes ) == 0 ) {
+        escutaAtiva = true;
+    } else {
+        auxDb = new FBConnect( "172.18.0.3:/var/lib/firebird/data/mautec.fdb", FB_USER, FB_PASS );
+        if ( auxDb->Connected && auxDb->EventInit( nomes ) == 0 ) {
+            evDb = auxDb;
+            escutaAtiva = true;
+        } else {
+            delete auxDb;
+            auxDb = NULL;
+        }
+    }
+
+    evWin.setVar( 0, 3,  2, S( "Eventos Monitorados:" ), 42 );
+    evWin.setVar( 1, 5,  2, S( "Contador EVT_PEDIDO:" ), 24 );
+    evWin.setVar( 2, 6,  2, S( "Contador EVT_ALERTA:" ), 24 );
+    evWin.setVar( 3, 8,  2, S( "Ultimo Disparo.....:" ), 42 );
+
+    evWin.print( 11, 2, S( "Teclas: [1] Disparar POST_EVENT 'EVT_PEDIDO'" ) );
+    evWin.print( 12, 2, S( "        [2] Disparar POST_EVENT 'EVT_ALERTA'" ) );
+    evWin.print( 13, 2, S( "        [Z] Zerar contadores   |   [ESC] Voltar" ) );
+
+    unsigned int acumPedido = 0;
+    unsigned int acumAlerta = 0;
+    std::string  ultimoDisp = escutaAtiva
+        ? "Escutando via IAttachment::queEvents..."
+        : "Modo PostEvent (RemoteAuxPort nao exposta no Docker)";
+
+    if ( escutaAtiva ) {
+        evDb->EventWait( false ); // Enfileira escuta assincrona
+    }
+
+    while ( 1 ) {
+        char sPed[32], sAle[32];
+        snprintf( sPed, sizeof( sPed ), "%u disparos", acumPedido );
+        snprintf( sAle, sizeof( sAle ), "%u disparos", acumAlerta );
+
+        evWin.printVar( 0, S( "EVT_PEDIDO, EVT_ALERTA (EPB v1)" ) );
+        evWin.printVar( 1, sPed, acumPedido > 0 ? MauWin::cor( COLOR_BLACK, COLOR_GREEN,  A_BOLD ) : A_BOLD );
+        evWin.printVar( 2, sAle, acumAlerta > 0 ? MauWin::cor( COLOR_WHITE, COLOR_RED,    A_BOLD ) : A_BOLD );
+        evWin.printVar( 3, S( ultimoDisp.c_str() ) );
+        evWin.show();
+
+        int k = evWin.getKey();
+        status.relogio( CAMPO_HORA, S( "Db" ) );
+
+        if ( k == ERR ) continue;
+        if ( k == ESCAPE || k == 'q' || k == 'Q' ) break;
+
+        if ( k == '1' ) {
+            if ( evDb->PostEvent( "EVT_PEDIDO" ) == 0 ) {
+                if ( escutaAtiva ) {
+                    usleep( 80000 );
+                    evDb->EventCounts();
+                    unsigned int delta = evDb->getEventCount( "EVT_PEDIDO" );
+                    acumPedido += ( delta > 0 ? delta : 1 );
+                    evDb->EventWait( false );
+                } else {
+                    acumPedido++;
+                }
+                ultimoDisp = "POST_EVENT 'EVT_PEDIDO' confirmado!";
+                atualizaStatus( status, ultimoDisp.c_str() );
+            }
+        } else if ( k == '2' ) {
+            if ( evDb->PostEvent( "EVT_ALERTA" ) == 0 ) {
+                if ( escutaAtiva ) {
+                    usleep( 80000 );
+                    evDb->EventCounts();
+                    unsigned int delta = evDb->getEventCount( "EVT_ALERTA" );
+                    acumAlerta += ( delta > 0 ? delta : 1 );
+                    evDb->EventWait( false );
+                } else {
+                    acumAlerta++;
+                }
+                ultimoDisp = "POST_EVENT 'EVT_ALERTA' confirmado!";
+                atualizaStatus( status, ultimoDisp.c_str() );
+            }
+        } else if ( k == 'z' || k == 'Z' ) {
+            acumPedido = 0;
+            acumAlerta = 0;
+            ultimoDisp = "Contadores zerados";
+            atualizaStatus( status, ultimoDisp.c_str() );
+        }
+    }
+
+    evDb->EventsClear();
+    delete auxDb;
+}
+
+// ---------------------------------------------------------------------------
 int main( void )
 {
     // 1. CONECTA AO FIREBIRD 5.0 ANTES DE INICIAR A TELA
@@ -716,6 +822,7 @@ int main( void )
         { "Clientes e Lote (ExecuteBatch)",              0, 0 },
         { "Vitrine de Tipos Firebird 5.0 (20 colunas)",  0, 0 },
         { "Diagnostico (Ping / Reconnect / Sequence)",   0, 0 },
+        { "Eventos Firebird 5.0 (queEvents / PostEvent)",0, 0 },
         { "Sair",                                        0, 0 },
     };
     const int QTD_OPCOES = sizeof( opcoes ) / sizeof( opcoes[0] );
@@ -726,7 +833,7 @@ int main( void )
         status.show();
         status.relogio( CAMPO_HORA, S( "Db" ) );
 
-        MauWin principal( 13, 56, 6, 12, 1 );
+        MauWin principal( 14, 56, 5, 12, 1 );
         aplicaTema( principal );
         principal.menuSet( opcoes, S( " FBConnect 5.0 + MauWin - MENU PRINCIPAL" ), QTD_OPCOES );
 
@@ -738,6 +845,7 @@ int main( void )
         else if ( escolha == 3 ) telaClientes( status, db );
         else if ( escolha == 4 ) telaTiposFirebird5( status, db );
         else if ( escolha == 5 ) telaDiagnostico( status, db );
+        else if ( escolha == 6 ) telaEventosFirebird5( status, db );
         else break;
     }
 

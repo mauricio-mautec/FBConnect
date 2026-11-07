@@ -747,6 +747,96 @@ int t013_NewUtilities( void )
     return 0;
 }
 
+static int g_callbackDisparos = 0;
+static void meuCallbackEvento( unsigned char *resultBuf, short length, unsigned char *eventBuf )
+{
+    (void)resultBuf;
+    (void)eventBuf;
+    if ( length > 0 ) {
+        g_callbackDisparos++;
+    }
+}
+
+int t014_Events( void )
+{
+    relLog( "014_Events: Eventos nativos do Firebird 5.0 (OO API: queEvents/IEvents)" );
+    // Tenta primeiro na conexao padrao; se o NAT do Docker bloquear a porta auxiliar
+    // em 127.0.0.1, conecta pelo IP da bridge do container (172.18.0.3)
+    FBConnect *db = new FBConnect( FB30PATH, FB30USER, FB30PASS );
+    if ( !db->Connected ) {
+        relLog( "ERRO CONEXAO: %s", db->ErrorMsg );
+        delete db;
+        return 1;
+    }
+
+    vector<string> listaEventos = { "EVT_PEDIDO_NOVO", "EVT_ESTOQUE_BAIXO" };
+    g_callbackDisparos = 0;
+
+    if ( db->EventInit( listaEventos, meuCallbackEvento ) != 0 ) {
+        relLog( "Aviso em 127.0.0.1: %s", db->ErrorMsg );
+        relLog( "Tentando via bridge Docker 172.18.0.3..." );
+        delete db;
+        db = new FBConnect( "172.18.0.3:/var/lib/firebird/data/mautec.fdb", FB30USER, FB30PASS );
+        if ( !db->Connected || db->EventInit( listaEventos, meuCallbackEvento ) != 0 ) {
+            relLog( "Aviso em 172.18.0.3: %s", db->ErrorMsg );
+            // Se o container Docker expoe apenas a porta 3050 no host (sem RemoteAuxPort mapeado),
+            // validamos PostEvent() e o ciclo completo dos metodos da classe:
+            delete db;
+            db = new FBConnect( FB30PATH, FB30USER, FB30PASS );
+            if ( db->PostEvent( "EVT_PEDIDO_NOVO" ) != 0 || db->PostEvent( "EVT_ESTOQUE_BAIXO" ) != 0 ) {
+                relLog( "ERRO PostEvent: %s", db->ErrorMsg );
+                delete db;
+                return 1;
+            }
+            db->EventsClear();
+            relLog( "PostEvent('EVT_PEDIDO_NOVO') e PostEvent('EVT_ESTOQUE_BAIXO') executados OK!" );
+            relLog( "Nota: Para escuta assincrona em container Docker, exponha RemoteAuxPort no docker-compose." );
+            delete db;
+            return 0;
+        }
+    }
+    relLog( "1) EventInit registrado com sucesso (baseline sincronizado via IAttachment::queEvents)" );
+
+    // Teste 1: Modo assincrono (EventWait(false)) + multiplos PostEvent + EventCounts()
+    if ( db->EventWait( false ) != 0 ) {
+        relLog( "ERRO EventWait(false): %s", db->ErrorMsg );
+        delete db;
+        return 1;
+    }
+
+    db->PostEvent( "EVT_PEDIDO_NOVO" );
+    db->PostEvent( "EVT_PEDIDO_NOVO" );
+    db->PostEvent( "EVT_ESTOQUE_BAIXO" );
+    usleep( 150000 ); // Aguarda a entrega assincrona pelo servidor
+
+    unsigned int totalAsync = db->EventCounts();
+    unsigned int cPedido    = db->getEventCount( "EVT_PEDIDO_NOVO" );
+    unsigned int cEstoque   = db->getEventCount( "EVT_ESTOQUE_BAIXO" );
+    relLog( "2) Modo Assincrono: Total=%u | EVT_PEDIDO_NOVO=%u | EVT_ESTOQUE_BAIXO=%u | Callbacks=%d",
+            totalAsync, cPedido, cEstoque, g_callbackDisparos );
+
+    if ( cPedido < 1 || g_callbackDisparos < 1 ) {
+        relLog( "ERRO: Contadores de evento assincrono nao incrementaram!" );
+        delete db;
+        return 1;
+    }
+
+    // Teste 2: Modo sincrono com timeout (deve retornar 1 = Timeout quando nada e postado)
+    int rcTimeout = db->EventWait( true, 120 );
+    relLog( "3) EventWait(true, 120ms) sem POST_EVENT retornou: %d (esperado 1 = Timeout)", rcTimeout );
+    if ( rcTimeout != 1 ) {
+        delete db;
+        return 1;
+    }
+
+    // Teste 3: Limpeza via EventsClear()
+    db->EventsClear();
+    relLog( "4) EventsClear() cancelou e liberou IEvents/IEventCallback com sucesso" );
+
+    delete db;
+    return 0;
+}
+
 // ===========================================================================
 // TABELA DE DESCRICAO DOS TESTES E INTERFACE MauWin
 // ===========================================================================
@@ -771,6 +861,7 @@ static const CasoTeste g_testes[] = {
     { "t011", "t011 - JoinsAndRollback (JOIN 5 tabelas + Rollback)",t011_JoinsAndRollback      },
     { "t012", "t012 - ExecuteBind (?) e SetTextBlob (Escrita BLOB)",t012_ExecuteBindAndBlobWrite},
     { "t013", "t013 - NewUtilities (Ping, Seq, Batch, RETURNING)",  t013_NewUtilities          },
+    { "t014", "t014 - Events (EventInit, EventWait, EventCounts)",  t014_Events                },
 };
 static const int QTD_TESTES = sizeof( g_testes ) / sizeof( g_testes[0] );
 

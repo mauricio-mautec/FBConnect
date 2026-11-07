@@ -89,6 +89,8 @@ typedef struct fbcol {
 } FBCOL;
 
 
+class FBEventCallback;
+
 class FBConnect
 {
 
@@ -104,16 +106,24 @@ IResultSet       *CURSOR;
 IMessageMetadata *METAI, *METAO;
 IMetadataBuilder *BUILDER;
 IStatement       *STATEMENT;
+IEvents          *EVENTS;
+FBEventCallback  *EVENT_CB;
 
 int Prepare (const char *stmt);
 int setupOutputMetadata (IStatus *status);
 void closeQueryResources (IStatus *status);
+void cancelActiveEvents (void);
 int connectInternal (void);
 
 string          dbPath;
 string          dbUser;
 string          dbPass;
 string          dbCharset;
+
+vector<string>        EventNames;
+vector<unsigned char> EventBufferVec;
+vector<unsigned char> ResultBufferVec;
+vector<unsigned int>  EventDeltas;
 
 FBCOL          *FBCol;
 unsigned char  *BufferData;
@@ -135,6 +145,20 @@ bool            Ping (void);
 int             Reconnect (void);
 int64_t         getNextSequence (const char *seqName, int step = 1);
 char            ErrorMsg[356];
+
+// EVENTOS DO FIREBIRD 5.x (OO API: IAttachment::queEvents / IEvents / IEventCallback)
+void            (*EventFunction)(unsigned char*, short, unsigned char*);
+unsigned int    Events[1];
+int             EventInit      (const char *event, void (*funcao)(unsigned char*, short, unsigned char*) = NULL);
+int             EventInit      (const vector<string> &events, void (*funcao)(unsigned char*, short, unsigned char*) = NULL);
+int             EventInit      (const char *event, unsigned char *resultbuff, unsigned char *eventbuff, void (*funcao)(unsigned char*, short, unsigned char*));
+int             EventWait      (bool block = true, int timeoutMs = 0);
+unsigned int    EventCounts    (void);
+unsigned int    getEventCount  (int index = 0);
+unsigned int    getEventCount  (const char *eventName);
+void            EventClear     (void);
+void            EventsClear    (void);
+int             PostEvent      (const char *eventName);
 
 unsigned char   Status;
 bool            Connected;

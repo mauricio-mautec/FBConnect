@@ -43,6 +43,15 @@ C++ wrapper class for the Firebird 5.x Object-Oriented API (`<firebird/Interface
   - `int GetFileBlob(FILE *file)`
   - `int SetTextBlob(const char *query, const char *texto, int bloblen)`
   - `int SetFileBlob(const char *query, FILE *file, int bloblen)`
+- **Firebird 5.x Native Events (`IAttachment::queEvents` / `IEvents` / `IEventCallback`)**
+  - `int EventInit(const char *event, void (*funcao)(unsigned char*, short, unsigned char*) = NULL)`
+  - `int EventInit(const vector<string> &events, void (*funcao)(unsigned char*, short, unsigned char*) = NULL)`
+  - `int EventInit(const char *event, unsigned char *resultbuff, unsigned char *eventbuff, void (*funcao)(unsigned char*, short, unsigned char*))`
+  - `int EventWait(bool block = true, int timeoutMs = 0)`
+  - `unsigned int EventCounts()`
+  - `unsigned int getEventCount(int index = 0)` / `unsigned int getEventCount(const char *eventName)`
+  - `void EventClear()` / `void EventsClear()`
+  - `int PostEvent(const char *eventName)`
 
 ## Supported Firebird 5.x SQL Data Types
 - `SMALLINT`, `INTEGER`, `BIGINT`, `INT128`

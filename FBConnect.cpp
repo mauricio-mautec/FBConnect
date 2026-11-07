@@ -10,9 +10,130 @@
 #include <iostream>
 #include <string>
 #include <sstream>
+#include <mutex>
+#include <condition_variable>
+#include <atomic>
+#include <chrono>
 
 using namespace std;
 static IMaster *Master = fb_get_master_interface();
+
+// ===========================================================================
+// IMPLEMENTACAO DE IEventCallback (FIREBIRD 5.x OO API - SEM FUNCOES isc_*)
+// ===========================================================================
+class FBEventCallback : public IEventCallbackImpl<FBEventCallback, ThrowStatusWrapper>
+{
+public:
+    std::mutex                   mtx;
+    std::condition_variable      cv;
+    std::atomic<int>             refCount;
+    bool                         fired;
+    std::vector<unsigned char>   resultBuffer;
+    void                       (*userCallback)(unsigned char*, short, unsigned char*);
+    unsigned char               *userResultBuf;
+    unsigned char               *userEventBuf;
+
+    FBEventCallback()
+        : refCount(1), fired(false), userCallback(NULL), userResultBuf(NULL), userEventBuf(NULL)
+    {
+    }
+
+    virtual ~FBEventCallback() {}
+
+    void addRef() override
+    {
+        refCount.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    int release() override
+    {
+        int r = refCount.fetch_sub(1, std::memory_order_acq_rel) - 1;
+        if (r == 0) {
+            delete this;
+            return 0;
+        }
+        return r;
+    }
+
+    void eventCallbackFunction(unsigned length, const unsigned char* events) override
+    {
+        if (!events || length == 0) return;
+
+        void (*cb)(unsigned char*, short, unsigned char*) = NULL;
+        unsigned char *resPtr = NULL;
+        unsigned char *evtPtr = NULL;
+
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            resultBuffer.assign(events, events + length);
+            if (userResultBuf) {
+                memcpy(userResultBuf, events, length);
+            }
+            fired  = true;
+            cb     = userCallback;
+            resPtr = userResultBuf ? userResultBuf : resultBuffer.data();
+            evtPtr = userEventBuf;
+        }
+
+        if (cb) {
+            cb(resPtr, (short)length, evtPtr);
+        }
+        cv.notify_all();
+    }
+};
+
+// CONSTROI O BLOCO EPB (Event Parameter Block - EPB_version1 = 1) DIRETAMENTE EM C++
+static void buildEpbBlock(const vector<string> &names, vector<unsigned char> &epb)
+{
+    epb.clear();
+    epb.push_back(1); // EPB_version1
+    for (size_t i = 0; i < names.size(); ++i) {
+        size_t len = names[i].size();
+        if (len > 255) len = 255;
+        epb.push_back((unsigned char)len);
+        for (size_t j = 0; j < len; ++j) {
+            epb.push_back((unsigned char)names[i][j]);
+        }
+        // 4 bytes (uint32_t little-endian) do contador inicial = 0
+        epb.push_back(0);
+        epb.push_back(0);
+        epb.push_back(0);
+        epb.push_back(0);
+    }
+}
+
+static uint32_t readLe32(const unsigned char *p)
+{
+    return (uint32_t)p[0]
+         | ((uint32_t)p[1] << 8)
+         | ((uint32_t)p[2] << 16)
+         | ((uint32_t)p[3] << 24);
+}
+
+// CALCULA AS DIFERENCAS DOS CONTADORES NO EPB E ATUALIZA O BLOCO PARA O PROXIMO CICLO
+static void updateEpbCounts(vector<unsigned char> &epb,
+                            const vector<unsigned char> &resultBuf,
+                            vector<unsigned int> &deltas,
+                            bool baselineOnly)
+{
+    deltas.clear();
+    if (epb.empty() || resultBuf.size() < epb.size()) return;
+
+    size_t pos = 1; // pula o byte de versao (1)
+    while (pos < epb.size()) {
+        unsigned char nameLen = epb[pos];
+        pos += 1 + nameLen;
+        if (pos + 4 > epb.size()) break;
+
+        uint32_t oldVal = readLe32(&epb[pos]);
+        uint32_t newVal = readLe32(&resultBuf[pos]);
+        unsigned int diff = baselineOnly ? 0u : (unsigned int)(newVal - oldVal);
+        deltas.push_back(diff);
+
+        memcpy(&epb[pos], &resultBuf[pos], 4);
+        pos += 4;
+    }
+}
 
 static bool isDmlReturningStmt(const char *stmt)
 {
@@ -37,6 +158,10 @@ FBConnect::FBConnect (const char * banco, const char * user, const char * senha,
     this->METAO        = NULL;
     this->BUILDER      = NULL;
     this->STATEMENT    = NULL;
+    this->EVENTS       = NULL;
+    this->EVENT_CB     = NULL;
+    this->EventFunction= NULL;
+    this->Events[0]    = 0;
     this->FBCol        = NULL;
     this->BufferData   = NULL;
     this->blob         = NULL;
@@ -165,8 +290,30 @@ void FBConnect::closeQueryResources (IStatus *status)
     this->isFetchOK  = false;
 }
 
+void FBConnect::cancelActiveEvents (void)
+{
+    if (this->EVENTS && this->STATUS) {
+        ThrowStatusWrapper st(this->STATUS);
+        try {
+            this->EVENTS->cancel(&st);
+        }
+        catch (const FbException&) {
+            this->EVENTS->release();
+        }
+        this->EVENTS = NULL;
+    } else if (this->EVENTS) {
+        this->EVENTS->release();
+        this->EVENTS = NULL;
+    }
+    if (this->EVENT_CB) {
+        this->EVENT_CB->release();
+        this->EVENT_CB = NULL;
+    }
+}
+
 FBConnect::~FBConnect()
 {
+    this->cancelActiveEvents();
     if (this->STATUS) {
         this->closeQueryResources(this->STATUS);
         ThrowStatusWrapper status(this->STATUS);
@@ -212,6 +359,7 @@ bool FBConnect::Ping (void)
 
 int FBConnect::Reconnect (void)
 {
+    this->cancelActiveEvents();
     if (this->STATUS) {
         this->closeQueryResources(this->STATUS);
         ThrowStatusWrapper status(this->STATUS);
@@ -1489,3 +1637,263 @@ int FBConnect:: getBlobSize(IBlob * handler)
 	this->BlobNumChar = total_length;
         return this->BlobNumChar;
 }
+
+// ===========================================================================
+// EVENTOS DO FIREBIRD 5.x (100% OO API: IAttachment::queEvents / IEvents / IEventCallback)
+// ===========================================================================
+
+void FBConnect::EventClear (void)
+{
+    this->cancelActiveEvents();
+    this->EventNames.clear();
+    this->EventBufferVec.clear();
+    this->ResultBufferVec.clear();
+    this->EventDeltas.clear();
+    this->Events[0]     = 0;
+    this->EventFunction = NULL;
+}
+
+void FBConnect::EventsClear (void)
+{
+    this->EventClear();
+}
+
+int FBConnect::EventInit (const vector<string> &events, void (*funcao)(unsigned char*, short, unsigned char*))
+{
+    if (!this->Connected || !this->ATTATCHMENT || !this->STATUS) return -1;
+    if (events.empty()) {
+        snprintf(this->ErrorMsg, sizeof(this->ErrorMsg), "FBConnect::EventInit: EMPTY EVENT LIST");
+        return -1;
+    }
+
+    this->EventClear();
+    this->EventNames    = events;
+    this->EventFunction = funcao;
+
+    buildEpbBlock(this->EventNames, this->EventBufferVec);
+    this->ResultBufferVec = this->EventBufferVec;
+    this->EventDeltas.assign(this->EventNames.size(), 0u);
+    this->Events[0] = 0;
+
+    this->EVENT_CB = new FBEventCallback();
+
+    // Sincronizacao inicial de baseline: no protocolo do Firebird, o primeiro queEvents
+    // retorna imediatamente com os contadores atuais do servidor. Fazemos essa leitura
+    // silenciosamente aqui para que o proximo EventWait aguarde um POST_EVENT real.
+    ThrowStatusWrapper status(this->STATUS);
+    try {
+        {
+            std::lock_guard<std::mutex> lock(this->EVENT_CB->mtx);
+            this->EVENT_CB->fired = false;
+        }
+
+        this->EVENTS = this->ATTATCHMENT->queEvents(
+            &status,
+            this->EVENT_CB,
+            (unsigned)this->EventBufferVec.size(),
+            this->EventBufferVec.data()
+        );
+
+        {
+            std::unique_lock<std::mutex> lock(this->EVENT_CB->mtx);
+            this->EVENT_CB->cv.wait_for(
+                lock,
+                std::chrono::milliseconds(5000),
+                [this]() { return this->EVENT_CB->fired; }
+            );
+            if (this->EVENT_CB->fired) {
+                this->ResultBufferVec = this->EVENT_CB->resultBuffer;
+            }
+        }
+
+        if (this->EVENTS) {
+            this->EVENTS->release();
+            this->EVENTS = NULL;
+        }
+
+        updateEpbCounts(this->EventBufferVec, this->ResultBufferVec, this->EventDeltas, true);
+        this->EVENT_CB->userCallback = this->EventFunction;
+        this->EVENT_CB->userEventBuf = this->EventBufferVec.data();
+        return 0;
+    }
+    catch (const FbException &error) {
+        this->UTIL->formatStatus(this->ErrorMsg, sizeof(this->ErrorMsg), error.getStatus());
+        this->EventClear();
+        return -1;
+    }
+}
+
+int FBConnect::EventInit (const char *event, void (*funcao)(unsigned char*, short, unsigned char*))
+{
+    if (!event || strlen(event) == 0) {
+        snprintf(this->ErrorMsg, sizeof(this->ErrorMsg), "FBConnect::EventInit: INVALID EVENT NAME");
+        return -1;
+    }
+    vector<string> list;
+    list.push_back(string(event));
+    return this->EventInit(list, funcao);
+}
+
+int FBConnect::EventInit (const char *event,
+                          unsigned char *resultbuff,
+                          unsigned char *eventbuff,
+                          void (*funcao)(unsigned char*, short, unsigned char*))
+{
+    int rc = this->EventInit(event, funcao);
+    if (rc == 0 && this->EVENT_CB) {
+        std::lock_guard<std::mutex> lock(this->EVENT_CB->mtx);
+        this->EVENT_CB->userResultBuf = resultbuff;
+        this->EVENT_CB->userEventBuf  = eventbuff ? eventbuff : this->EventBufferVec.data();
+    }
+    return rc;
+}
+
+unsigned int FBConnect::EventCounts (void)
+{
+    if (!this->Connected || this->EventBufferVec.empty()) return 0;
+
+    if (this->EVENT_CB) {
+        std::lock_guard<std::mutex> lock(this->EVENT_CB->mtx);
+        if (!this->EVENT_CB->resultBuffer.empty()) {
+            this->ResultBufferVec = this->EVENT_CB->resultBuffer;
+        }
+    }
+
+    updateEpbCounts(this->EventBufferVec, this->ResultBufferVec, this->EventDeltas, false);
+
+    unsigned int total = 0;
+    for (size_t i = 0; i < this->EventDeltas.size(); ++i) {
+        total += this->EventDeltas[i];
+    }
+    this->Events[0] = this->EventDeltas.empty() ? 0u : this->EventDeltas[0];
+    return total;
+}
+
+unsigned int FBConnect::getEventCount (int index)
+{
+    if (index < 0 || (size_t)index >= this->EventDeltas.size()) return 0;
+    return this->EventDeltas[index];
+}
+
+unsigned int FBConnect::getEventCount (const char *eventName)
+{
+    if (!eventName) return 0;
+    for (size_t i = 0; i < this->EventNames.size() && i < this->EventDeltas.size(); ++i) {
+        if (this->EventNames[i] == eventName) {
+            return this->EventDeltas[i];
+        }
+    }
+    return 0;
+}
+
+int FBConnect::EventWait (bool block, int timeoutMs)
+{
+    if (!this->Connected || !this->ATTATCHMENT || !this->STATUS ||
+        this->EventBufferVec.empty() || !this->EVENT_CB) {
+        snprintf(this->ErrorMsg, sizeof(this->ErrorMsg), "FBConnect::EventWait: EVENT NOT INITIALIZED");
+        return -1;
+    }
+
+    ThrowStatusWrapper status(this->STATUS);
+    try {
+        if (this->EVENTS) {
+            try { this->EVENTS->cancel(&status); } catch (const FbException&) { this->EVENTS->release(); }
+            this->EVENTS = NULL;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(this->EVENT_CB->mtx);
+            this->EVENT_CB->fired = false;
+            this->EVENT_CB->userEventBuf = this->EventBufferVec.data();
+        }
+
+        this->EVENTS = this->ATTATCHMENT->queEvents(
+            &status,
+            this->EVENT_CB,
+            (unsigned)this->EventBufferVec.size(),
+            this->EventBufferVec.data()
+        );
+
+        if (!block) {
+            return 0;
+        }
+
+        bool disparou = false;
+        {
+            std::unique_lock<std::mutex> lock(this->EVENT_CB->mtx);
+            if (timeoutMs > 0) {
+                disparou = this->EVENT_CB->cv.wait_for(
+                    lock,
+                    std::chrono::milliseconds(timeoutMs),
+                    [this]() { return this->EVENT_CB->fired; }
+                );
+            } else {
+                this->EVENT_CB->cv.wait(lock, [this]() { return this->EVENT_CB->fired; });
+                disparou = true;
+            }
+
+            if (disparou) {
+                this->ResultBufferVec = this->EVENT_CB->resultBuffer;
+            }
+        }
+
+        if (!disparou) {
+            // Timeout atingido sem disparo de evento: cancela a fila atual
+            if (this->EVENTS) {
+                try { this->EVENTS->cancel(&status); } catch (const FbException&) { this->EVENTS->release(); }
+                this->EVENTS = NULL;
+            }
+            this->Events[0] = 0;
+            this->EventDeltas.assign(this->EventNames.size(), 0u);
+            return 1; // 1 = Timeout
+        }
+
+        if (this->EVENTS) {
+            this->EVENTS->release();
+            this->EVENTS = NULL;
+        }
+
+        this->EventCounts();
+        return 0;
+    }
+    catch (const FbException &error) {
+        this->UTIL->formatStatus(this->ErrorMsg, sizeof(this->ErrorMsg), error.getStatus());
+        return -1;
+    }
+}
+
+int FBConnect::PostEvent (const char *eventName)
+{
+    if (!this->Connected || !eventName || strlen(eventName) == 0) {
+        snprintf(this->ErrorMsg, sizeof(this->ErrorMsg), "FBConnect::PostEvent: INVALID EVENT NAME");
+        return -1;
+    }
+
+    for (const char *p = eventName; *p; ++p) {
+        if (*p == '\'' || *p == ';' || *p == '\n' || *p == '\r') {
+            snprintf(this->ErrorMsg, sizeof(this->ErrorMsg), "FBConnect::PostEvent: INVALID CHARACTER IN EVENT NAME");
+            return -1;
+        }
+    }
+
+    char sql[256];
+    snprintf(sql, sizeof(sql), "EXECUTE BLOCK AS BEGIN POST_EVENT '%s'; END", eventName);
+
+    bool autoStarted = false;
+    if (!this->InTrans) {
+        if (this->Start(FBWRITE) != 0) return -1;
+        autoStarted = true;
+    }
+
+    int rc = this->Execute(sql);
+    if (rc != 0) {
+        if (autoStarted) this->Rollback();
+        return -1;
+    }
+
+    if (autoStarted) {
+        return this->Commit();
+    }
+    return 0;
+}
+
