@@ -797,16 +797,18 @@ int t014_Events( void )
     }
     relLog( "1) EventInit registrado com sucesso (baseline sincronizado via IAttachment::queEvents)" );
 
-    // Teste 1: Modo assincrono (EventWait(false)) + multiplos PostEvent + EventCounts()
+    // Teste 1: Modo assincrono (EventWait(false)) + multiplos PostEvent na mesma transacao + EventCounts()
     if ( db->EventWait( false ) != 0 ) {
         relLog( "ERRO EventWait(false): %s", db->ErrorMsg );
         delete db;
         return 1;
     }
 
+    db->Start( FBWRITE );
     db->PostEvent( "EVT_PEDIDO_NOVO" );
     db->PostEvent( "EVT_PEDIDO_NOVO" );
     db->PostEvent( "EVT_ESTOQUE_BAIXO" );
+    db->Commit();
     usleep( 150000 ); // Aguarda a entrega assincrona pelo servidor
 
     unsigned int totalAsync = db->EventCounts();
@@ -815,8 +817,8 @@ int t014_Events( void )
     relLog( "2) Modo Assincrono: Total=%u | EVT_PEDIDO_NOVO=%u | EVT_ESTOQUE_BAIXO=%u | Callbacks=%d",
             totalAsync, cPedido, cEstoque, g_callbackDisparos );
 
-    if ( cPedido < 1 || g_callbackDisparos < 1 ) {
-        relLog( "ERRO: Contadores de evento assincrono nao incrementaram!" );
+    if ( totalAsync != 3 || cPedido != 2 || cEstoque != 1 || g_callbackDisparos < 1 ) {
+        relLog( "ERRO: Contadores de evento assincrono inesperados!" );
         delete db;
         return 1;
     }
@@ -829,9 +831,19 @@ int t014_Events( void )
         return 1;
     }
 
-    // Teste 3: Limpeza via EventsClear()
+    // Teste 3: Modo sincrono (EventWait(true, 2000)) recebendo evento real
+    db->PostEvent( "EVT_PEDIDO_NOVO" );
+    int rcSync = db->EventWait( true, 2000 );
+    relLog( "4) EventWait(true, 2000ms) apos PostEvent retornou: %d | EVT_PEDIDO_NOVO=%u",
+            rcSync, db->getEventCount( "EVT_PEDIDO_NOVO" ) );
+    if ( rcSync != 0 || db->getEventCount( "EVT_PEDIDO_NOVO" ) != 1 ) {
+        delete db;
+        return 1;
+    }
+
+    // Teste 4: Limpeza via EventsClear()
     db->EventsClear();
-    relLog( "4) EventsClear() cancelou e liberou IEvents/IEventCallback com sucesso" );
+    relLog( "5) EventsClear() cancelou e liberou IEvents/IEventCallback com sucesso" );
 
     delete db;
     return 0;
