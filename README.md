@@ -1,5 +1,5 @@
 # FBConnect
-a C++ class implementing to serve as a bridge to the new Interfaces in Firebird 3 API
+a C++ class implementing to serve as a bridge to the new Interfaces in Firebird 5 API
 
 # 2018/01/17 - MAURICIO JUNQUEIRA
 - It is in its initial development.
