@@ -801,6 +801,65 @@ int t011_JoinsAndRollback (void) {
     return (rows == 7) ? 0 : 1;
 }
 
+/*
+ *  Function t012_ExecuteBindAndBlobWrite
+ *
+ *  Tests ExecuteBind (parameterized query) and SetTextBlob (writing BLOB via OO API)
+ */
+int t012_ExecuteBindAndBlobWrite (void) {
+    printf ("\n--------------------------\n012_ExecuteBindAndBlobWrite TEST\n");
+    FBConnect *db = new FBConnect (FB30PATH, FB30USER, FB30PASS);
+    if (! db->Connected) {
+        printf ("ERROR CONNECTION %s\n", db->ErrorMsg);
+        delete (db);
+        return 1;
+    }
+
+    // 1. Testar ExecuteBind com parametros (?)
+    const char *params[] = { "1006", "Nova Fronteira Tech", "Diego", "Martins", "+55-48-94444-0006", "Florianopolis", "Brazil" };
+    db->Start(FBWRITE);
+    if (db->ExecuteBind("INSERT INTO CUSTOMER (CUST_NO, CUSTOMER, CONTACT_FIRST, CONTACT_LAST, PHONE_NO, CITY, COUNTRY) VALUES (?, ?, ?, ?, ?, ?, ?)", params, 7) != 0) {
+        printf ("ERRO ExecuteBind: %s\n", db->ErrorMsg);
+        db->Rollback();
+        delete (db);
+        return 1;
+    }
+    db->Commit();
+
+    // 2. Testar SetTextBlob gravando um novo BLOB em PROJECT
+    const char *novoBlob = "BLOB gravado via FBConnect::SetTextBlob usando IAttachment::createBlob e putSegment no Firebird 5.x!";
+    db->Start(FBWRITE);
+    if (db->SetTextBlob("UPDATE PROJECT SET PROJ_DESC = ? WHERE PROJ_ID = 'QAAUT'", novoBlob, (int)strlen(novoBlob)) != 0) {
+        printf ("ERRO SetTextBlob: %s\n", db->ErrorMsg);
+        db->Rollback();
+        delete (db);
+        return 1;
+    }
+    db->Commit();
+
+    // 3. Verificar leitura do registro inserido por ExecuteBind e do BLOB atualizado por SetTextBlob
+    if (db->Select("SELECT CUSTOMER, CITY FROM CUSTOMER WHERE CUST_NO = 1006") != 0 || db->Fetch() != 0) {
+        printf ("ERRO SELECT CUSTOMER 1006: %s\n", db->ErrorMsg);
+        delete (db);
+        return 1;
+    }
+    cout << "Cliente via ExecuteBind: " << db->getColumn(0) << " (" << db->getColumn(1) << ")" << endl;
+    db->Commit();
+
+    if (db->Select("SELECT PROJ_DESC FROM PROJECT WHERE PROJ_ID = 'QAAUT'") != 0 || db->Fetch() != 0) {
+        printf ("ERRO SELECT PROJECT QAAUT: %s\n", db->ErrorMsg);
+        delete (db);
+        return 1;
+    }
+    db->getColumn(0);
+    string blobLido = db->GetTextBlob();
+    cout << "BLOB gravado/lido      : [" << blobLido << "]" << endl;
+    db->Commit();
+
+    delete (db);
+    return (blobLido == novoBlob) ? 0 : 1;
+}
+
 int main (int argc, char* argv[]) {
      (void)argc;
      (void)argv;
@@ -838,6 +897,9 @@ int main (int argc, char* argv[]) {
 
     if (t011_JoinsAndRollback()){ printf ("\n011_JoinsAndRollback FAIL\n--------------------------\n\n"); return 1; }
     else                          printf ("\n011_JoinsAndRollback PASS\n--------------------------\n\n");
+
+    if (t012_ExecuteBindAndBlobWrite()){ printf ("\n012_ExecuteBindAndBlobWrite FAIL\n--------------------------\n\n"); return 1; }
+    else                                 printf ("\n012_ExecuteBindAndBlobWrite PASS\n--------------------------\n\n");
    
     return 0;
 }    
