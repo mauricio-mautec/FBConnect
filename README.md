@@ -54,8 +54,10 @@ C++ wrapper class for the Firebird 5.x Object-Oriented API (`<firebird/Interface
 - `TIME WITH TIME ZONE`, `TIMESTAMP WITH TIME ZONE` (with IANA regions)
 - `BLOB SUB_TYPE TEXT` / `BLOB SUB_TYPE BINARY`
 
-## Build & Run Tests
+## Build & Run (Test Suite & Example with MauWin)
 ```bash
 make
-./FBConnectTest
+./FBConnectTest          # Interactive MauWin test runner (select individual tests or run all)
+./FBConnectTest --batch  # Non-interactive batch mode for scripts/CI
+./exemploFBConnect       # Interactive MauWin example application (queries, JOINs, BLOBs, Batch, FB 5.0 types)
 ```

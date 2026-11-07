@@ -38,7 +38,10 @@ using namespace std;
 #define SAMPLES_DIALECT SQL_DIALECT_V6
 #define ZERA( a ) memset( a, '\0', sizeof( a ))
 
+#define FB_OK '1'
+#ifndef OK
 #define OK '1'
+#endif
 #define NOTOK '2'
 
 #define FBREAD  '1'

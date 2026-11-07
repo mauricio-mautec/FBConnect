@@ -1,26 +1,101 @@
-#include "FBConnect.h"
-#include <string>
-#include <iostream>
+// PROGRAMA DE TESTE DA CLASSE FBConnect (FIREBIRD 5.0) COM INTERFACE MauWin
+//
+// PERMITE ESCOLHER QUAL TESTE EXECUTAR (OU EXECUTAR TODA A BATERIA DE TESTES)
+// ATRAVES DE UM MENU MauWin E APRESENTA OS RESULTADOS DETALHADOS EM JANELAS
+// COM ROLAGEM, BARRA DE STATUS COM RELOGIO E INDICADORES COLORIDOS (PASS/FAIL).
+//
+// COMPILAR:  make
+// RODAR:     ./FBConnectTest          (MODO INTERATIVO MauWin - TERMINAL >= 24x80)
+//            ./FBConnectTest --batch  (MODO NAO-INTERATIVO PARA SCRIPTS/CI)
 
-#define FB25PATH "127.0.0.1:/var/lib/firebird/data/mautec.fdb"
-#define FB25PASS "pqIobXtPui94hw9"
-#define FB25USER "softgo"
+#include "FBConnect.h"
+#include "MauWin.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdarg.h>
+#include <string.h>
+#include <unistd.h>
+#include <locale.h>
+#include <ncurses.h>
+#include <string>
+#include <vector>
+#include <map>
+
+#define S(x) ((char*)(x))
+
 #define FB30PATH "127.0.0.1:/var/lib/firebird/data/mautec.fdb"
 #define FB30PASS "pqIobXtPui94hw9"
 #define FB30USER "softgo"
 
 using namespace std;
 
-int t000_SetupDatabase(void) {
-    printf ("\n--------------------------\n000_SetupDatabase TEST\n Preparing tables and populating data in mautec.fdb\n");
-    FBConnect *db = new FBConnect (FB30PATH, FB30USER, FB30PASS);
-    if (! db->Connected) {
-        printf ("Connection Error %s\n", db->ErrorMsg);
-        delete(db);
+// ---------------------------------------------------------------------------
+// COLETOR DE LINHAS DO RELATORIO PARA EXIBICAO NO MauWin (E stdout EM --batch)
+static vector<string> g_linhasRelatorio;
+static bool           g_modoBatch = false;
+
+static void limpaRelatorio( void )
+{
+    g_linhasRelatorio.clear();
+}
+
+static void adicionaLinhaBruta( const string &s )
+{
+    const size_t LARGURA_MAX = 70;
+    if ( s.empty() ) {
+        g_linhasRelatorio.push_back( "" );
+        return;
+    }
+    size_t pos = 0;
+    while ( pos < s.size() ) {
+        size_t tam = s.size() - pos;
+        if ( tam > LARGURA_MAX ) tam = LARGURA_MAX;
+        g_linhasRelatorio.push_back( s.substr( pos, tam ) );
+        pos += tam;
+    }
+}
+
+static void relLog( const char *fmt, ... )
+{
+    char buf[2048];
+    va_list args;
+    va_start( args, fmt );
+    vsnprintf( buf, sizeof( buf ), fmt, args );
+    va_end( args );
+
+    if ( g_modoBatch ) {
+        printf( "%s\n", buf );
+    }
+
+    // Divide por '\n' caso haja multiplas linhas
+    string texto( buf );
+    size_t inicio = 0;
+    while ( inicio <= texto.size() ) {
+        size_t nl = texto.find( '\n', inicio );
+        if ( nl == string::npos ) {
+            adicionaLinhaBruta( texto.substr( inicio ) );
+            break;
+        }
+        adicionaLinhaBruta( texto.substr( inicio, nl - inicio ) );
+        inicio = nl + 1;
+    }
+}
+
+// ===========================================================================
+// CASOS DE TESTE DO FBConnect (FIREBIRD 5.0)
+// ===========================================================================
+
+int t000_SetupDatabase( void )
+{
+    relLog( "000_SetupDatabase: Recriando tabelas e populando dados em mautec.fdb" );
+    FBConnect *db = new FBConnect( FB30PATH, FB30USER, FB30PASS );
+    if ( !db->Connected ) {
+        relLog( "ERRO DE CONEXAO: %s", db->ErrorMsg );
+        delete db;
         return 1;
     }
 
-    printf ("Database Connected — Firebird Engine Version: %s\n", db->getServerVersion().c_str());
+    relLog( "Conectado! Versao do motor Firebird: %s", db->getServerVersion().c_str() );
 
     const char *ddl[] = {
         "RECREATE TABLE DEPARTMENT ("
@@ -102,20 +177,20 @@ int t000_SetupDatabase(void) {
         ")"
     };
 
-    for (size_t i = 0; i < sizeof(ddl) / sizeof(ddl[0]); ++i) {
-        db->Start(FBWRITE);
-        if (db->Execute(ddl[i]) == 0) {
+    for ( size_t i = 0; i < sizeof( ddl ) / sizeof( ddl[0] ); ++i ) {
+        db->Start( FBWRITE );
+        if ( db->Execute( ddl[i] ) == 0 ) {
             db->Commit();
         } else {
-            printf("DDL Error: %s\n", db->ErrorMsg);
+            relLog( "Erro DDL [%zu]: %s", i, db->ErrorMsg );
             db->Rollback();
-            delete(db);
+            delete db;
             return 1;
         }
     }
+    relLog( "8 tabelas recriadas com sucesso (DEPARTMENT, JOB, EMPLOYEE, PROJECT...)" );
 
     const char *inserts[] = {
-        // DEPARTMENT (6 rows)
         "INSERT INTO DEPARTMENT VALUES ('000', 'Corporate Headquarters', NULL, 2500000.00, 'Sao Paulo')",
         "INSERT INTO DEPARTMENT VALUES ('100', 'Sales and Marketing', '000', 1200000.50, 'Sao Paulo')",
         "INSERT INTO DEPARTMENT VALUES ('600', 'Engineering', '000', 3450000.75, 'Campinas')",
@@ -123,14 +198,12 @@ int t000_SetupDatabase(void) {
         "INSERT INTO DEPARTMENT VALUES ('622', 'Quality Assurance', '600', 780000.25, 'Curitiba')",
         "INSERT INTO DEPARTMENT VALUES ('623', 'Customer Support', '600', 620000.00, 'Belo Horizonte')",
 
-        // JOB (5 rows)
-        "INSERT INTO JOB VALUES ('Eng', 5, 'Brazil', 'Senior Software Engineer', 10000.00, 18000.00, 'Dominio de C/C++, Linux, Firebird 3 OO API, depuracao com GDB/Valgrind e arquitetura de sistemas de alta performance.')",
+        "INSERT INTO JOB VALUES ('Eng', 5, 'Brazil', 'Senior Software Engineer', 10000.00, 18000.00, 'Dominio de C/C++, Linux, Firebird 5 OO API, depuracao com GDB/Valgrind e arquitetura de sistemas de alta performance.')",
         "INSERT INTO JOB VALUES ('Eng', 4, 'Brazil', 'Software Engineer', 7000.00, 12000.00, 'Experiencia com desenvolvimento C++, SQL, controle de versao Git e testes automatizados.')",
         "INSERT INTO JOB VALUES ('Mngr', 6, 'Brazil', 'Engineering Manager', 15000.00, 25000.00, 'Lideranca tecnica de equipes de engenharia de software, planejamento de arquitetura e entregas.')",
         "INSERT INTO JOB VALUES ('QA', 3, 'Brazil', 'QA Analyst', 5000.00, 9000.00, 'Criacao de planos de teste, automacao de testes de regressao e validacao de banco de dados.')",
         "INSERT INTO JOB VALUES ('Sales', 4, 'Brazil', 'Account Executive', 6000.00, 14000.00, 'Gestao de contas corporativas, prospeccao e fechamento de contratos B2B.')",
 
-        // EMPLOYEE (7 rows)
         "INSERT INTO EMPLOYEE VALUES (101, 'Mauricio', 'Junqueira', '621', 'Mngr', 6, '2017-12-27', 19500.00)",
         "INSERT INTO EMPLOYEE VALUES (102, 'Ana', 'Beatriz', '621', 'Eng', 5, '2018-03-15', 14800.50)",
         "INSERT INTO EMPLOYEE VALUES (103, 'Roberto', 'Almeida', '621', 'Eng', 4, '2019-07-01', 9800.75)",
@@ -139,13 +212,11 @@ int t000_SetupDatabase(void) {
         "INSERT INTO EMPLOYEE VALUES (106, 'Patricia', 'Rocha', '623', 'Eng', 4, '2022-09-12', 10200.00)",
         "INSERT INTO EMPLOYEE VALUES (107, 'Gustavo', 'Nunes', '600', 'Eng', 5, '2018-11-18', 15600.80)",
 
-        // PROJECT (4 rows)
-        "INSERT INTO PROJECT VALUES ('FBCON', 'FBConnect C++ Interface', 101, 'Middleware', 'Biblioteca C++ de integracao direta com as novas interfaces orientadas a objetos (IMaster, IProvider, IAttachment, ITransaction, IStatement, IResultSet, IBlob) do Firebird 3.0+.')",
+        "INSERT INTO PROJECT VALUES ('FBCON', 'FBConnect C++ Interface', 101, 'Middleware', 'Biblioteca C++ de integracao direta com as interfaces orientadas a objetos (IMaster, IProvider, IAttachment, ITransaction, IStatement, IResultSet, IBlob) do Firebird 5.0.')",
         "INSERT INTO PROJECT VALUES ('SGERP', 'SoftGo ERP Core', 102, 'ERP', 'Nucleo de processamento transacional de alta concorrencia com suporte a multiplas conexoes, controle estrito de transacoes Read Committed e manipulacao de BLOBs.')",
         "INSERT INTO PROJECT VALUES ('BIAPI', 'Analytics & Telemetry', 107, 'Analytics', 'Pipeline de coleta e agregacao de indicadores operacionais em tempo real integrando Firebird, PostgreSQL, Redis e RabbitMQ.')",
         "INSERT INTO PROJECT VALUES ('QAAUT', 'Suite de Testes Automatizados', 104, 'Tooling', 'Bateria automatizada de testes de regressao e verificacao de vazamento de memoria com Valgrind.')",
 
-        // EMPLOYEE_PROJECT (7 rows)
         "INSERT INTO EMPLOYEE_PROJECT VALUES (101, 'FBCON')",
         "INSERT INTO EMPLOYEE_PROJECT VALUES (102, 'FBCON')",
         "INSERT INTO EMPLOYEE_PROJECT VALUES (102, 'SGERP')",
@@ -154,20 +225,17 @@ int t000_SetupDatabase(void) {
         "INSERT INTO EMPLOYEE_PROJECT VALUES (106, 'SGERP')",
         "INSERT INTO EMPLOYEE_PROJECT VALUES (107, 'BIAPI')",
 
-        // SALARY_HISTORY (4 rows)
         "INSERT INTO SALARY_HISTORY VALUES (101, '2019-01-15 10:30:00', 'ADMIN', 16500.00, 18.18)",
         "INSERT INTO SALARY_HISTORY VALUES (102, '2020-06-01 14:15:30', 'MAURICIO', 12500.00, 18.404)",
         "INSERT INTO SALARY_HISTORY VALUES (103, '2021-08-10 09:00:00', 'MAURICIO', 8500.00, 15.3029)",
         "INSERT INTO SALARY_HISTORY VALUES (107, '2022-03-20 16:45:12', 'ADMIN', 13800.00, 13.0492)",
 
-        // CUSTOMER (5 rows)
         "INSERT INTO CUSTOMER VALUES (1001, 'Mautec Tecnologia Ltda', 'Mauricio', 'Junqueira', '+55-11-99999-0001', 'Sao Paulo', 'Brazil')",
         "INSERT INTO CUSTOMER VALUES (1002, 'SoftGo Sistemas S.A.', 'Carlos', 'Eduardo', '+55-19-98888-0002', 'Campinas', 'Brazil')",
         "INSERT INTO CUSTOMER VALUES (1003, 'Horizonte Logistica', 'Mariana', 'Silva', '+55-31-97777-0003', 'Belo Horizonte', 'Brazil')",
         "INSERT INTO CUSTOMER VALUES (1004, 'Sul Cloud Services', 'Rafael', 'Kowalski', '+55-41-96666-0004', 'Curitiba', 'Brazil')",
         "INSERT INTO CUSTOMER VALUES (1005, 'Atlantico Comercio Exterior', 'Helena', 'Santos', '+55-21-95555-0005', 'Rio de Janeiro', 'Brazil')",
 
-        // TYPE_SHOWCASE (2 rows covering all Firebird 5.x SQL types including INT128, DECFLOAT, TIME ZONE, BOOLEAN, NULL)
         "INSERT INTO TYPE_SHOWCASE VALUES ("
         "  1, 'FIX-000001', 'Registro Completo Positivo', 32000, 9876543210123, 123456.7895, 3.14159, 2.718281828459,"
         "  '2026-11-07', '14:35:22.1230', '2026-11-07 14:35:22.1230',"
@@ -186,510 +254,266 @@ int t000_SetupDatabase(void) {
         ")"
     };
 
-    db->Start(FBWRITE);
-    for (size_t i = 0; i < sizeof(inserts) / sizeof(inserts[0]); ++i) {
-        if (db->Execute(inserts[i]) != 0) {
-            printf("Insert Error on [%zu]: %s\n", i, db->ErrorMsg);
+    db->Start( FBWRITE );
+    size_t qtdInserts = sizeof( inserts ) / sizeof( inserts[0] );
+    for ( size_t i = 0; i < qtdInserts; ++i ) {
+        if ( db->Execute( inserts[i] ) != 0 ) {
+            relLog( "Erro INSERT [%zu]: %s", i, db->ErrorMsg );
             db->Rollback();
-            delete(db);
+            delete db;
             return 1;
         }
     }
     db->Commit();
+    relLog( "%zu registros inseridos e confirmados via Commit()!", qtdInserts );
 
-    delete(db);
+    delete db;
     return 0;
 }
-int t001_Conexao25(void) {
-    printf ("\n--------------------------\n001_Conexao25  TEST\n Connecting to database Firebird 2.5\n");
-    FBConnect *db = new FBConnect (FB25PATH, FB25USER, FB25PASS);
-    if (! db->Connected) {
-        printf ("Connection Error %s\n", db->ErrorMsg);
-        delete(db);
-        return 1;
-        }
-    printf ("Database Connected\n");
-    delete(db);
-    return 0;
 
-}
-
-/*
- *  t002_ConexaoOK
- *
- *  This function tests the connection with Firebird
- */
-int t002_ConexaoOK(void) {
-    printf ("\n--------------------------\n002_ConexaoOK  TEST\n Connecting to Database\n");
-    FBConnect *db = new FBConnect (FB30PATH, FB30USER, FB30PASS);
-
-    if (! db->Connected) {
-        printf ("Connection Error %s\n", db->ErrorMsg);
-        delete(db);
-        return 1; }
-
-    printf ("Database Connected\n");
-
-    delete(db);
-    db = NULL;
-
-    return 0;
-
-}
-
-/*
- *  Function t003_ConexaoNOK
- *
- *  This function tests the connection with Firebird
- *  with not valid user and password
- */
-int t003_ConexaoNOK (void) {
-    printf ("\n--------------------------\n003_ConexaoNOK TEST\nConnecting with invalid password\n");
-    FBConnect *db = new FBConnect (FB30PATH, FB30USER, "thisisawrongpass");
-    
-    if (db->Connected) {
-        printf ("Database connected\n");
-        delete (db);
-        db = NULL;
+int t002_ConexaoOK( void )
+{
+    relLog( "002_ConexaoOK: Testando conexao valida ao Firebird 5.0" );
+    FBConnect *db = new FBConnect( FB30PATH, FB30USER, FB30PASS );
+    if ( !db->Connected ) {
+        relLog( "Falha na conexao: %s", db->ErrorMsg );
+        delete db;
         return 1;
     }
-    printf ("Connection Error %s\n", db->ErrorMsg);
-    delete (db);
-    db = NULL;
+    relLog( "Conexao estabelecida com sucesso em %s", FB30PATH );
+    relLog( "Servidor Firebird: %s", db->getServerVersion().c_str() );
+    delete db;
+    return 0;
+}
 
-    printf ("Connecting to database with invalid user\n");
-    db = new FBConnect ("server:DB", "USER", "PASSWRONG");
-    
-    if (db->Connected) {
-        printf ("Database Connection OK\n");
-        delete (db);
-        db = NULL;
+int t003_ConexaoNOK( void )
+{
+    relLog( "003_ConexaoNOK: Testando rejeicao de credenciais invalidas" );
+    FBConnect *db = new FBConnect( FB30PATH, FB30USER, "senha_invalida_123" );
+    if ( db->Connected ) {
+        relLog( "ERRO: Conectou com senha invalida!" );
+        delete db;
+        return 1;
+    }
+    relLog( "Senha invalida rejeitada OK: %s", db->ErrorMsg );
+    delete db;
+
+    db = new FBConnect( "servidor_inexistente:DB", "USER", "PASSWRONG" );
+    if ( db->Connected ) {
+        relLog( "ERRO: Conectou em servidor inexistente!" );
+        delete db;
+        return 1;
+    }
+    relLog( "Servidor invalido rejeitado OK: %s", db->ErrorMsg );
+    delete db;
+    return 0;
+}
+
+int t004_StartTrans( void )
+{
+    relLog( "004_StartTrans: Testando transacoes FBREAD e FBWRITE" );
+    FBConnect *db = new FBConnect( FB30PATH, FB30USER, FB30PASS );
+    if ( !db->Connected ) {
+        relLog( "ERRO CONEXAO: %s", db->ErrorMsg );
+        delete db;
         return 1;
     }
 
-    printf ("Connection Error %s\n", db->ErrorMsg);
-    delete (db);
-    db = NULL;
-
-    return 0;
-}
-
-/*
- *  Function t004_StartTrans
- *
- *  This function tests if Transaction is OK
- *  
- */
-int t004_StartTrans (void) {
-    printf ("\n--------------------------\n005_StartTrans TEST\nConnect with Firebird 3.0 e initiate a transaction\n");
-    FBConnect *db = new FBConnect (FB30PATH, FB30USER, FB30PASS);
-    
-    if (! db->Connected) {
-        printf ("ERRO CONEXAO %s\n", db->ErrorMsg);
-        delete (db);
-        db = NULL;
+    db->Start( FBREAD );
+    if ( !db->InTrans ) {
+        relLog( "ERRO ao iniciar transacao FBREAD" );
+        delete db;
         return 1;
     }
-
-    printf ("Database connected\n");
-
-    db->Start(FBREAD);
-    if (! db->InTrans) {
-        printf ("ERROR Reading Transaction\n");
-        delete (db);
-        db = NULL;
-        return 1; }    
-    printf ("Reading transaction successfully started!\n");
-
-
+    relLog( "Transacao FBREAD iniciada com sucesso (InTrans = true)" );
     db->Commit();
 
-    db->Start(FBWRITE);
-    if (! db->InTrans) {
-        printf ("ERROR Write Transaction\n");
-        delete (db);
-        db = NULL;
-        return 1; }    
-    printf ("Write transaction successfully started!\n");
-
+    db->Start( FBWRITE );
+    if ( !db->InTrans ) {
+        relLog( "ERRO ao iniciar transacao FBWRITE" );
+        delete db;
+        return 1;
+    }
+    relLog( "Transacao FBWRITE iniciada com sucesso (InTrans = true)" );
     db->Commit();
-    delete (db);
-    db = NULL;
+
+    delete db;
     return 0;
 }
 
-/*
- *  Function t005_SelectUT
- *
- *  This function tests if  possible read
- *  from a unavaiable table
- *  
- */
-int t005_SelectUT (void) {
-    printf ("\n--------------------------\n005_SelectUnknowTable   TEST\n");
-    FBConnect *db = new FBConnect (FB30PATH, FB30USER, FB30PASS);
-    
-    if (! db->Connected) {
-        printf ("ERRO CONEXAO %s\n", db->ErrorMsg);
-        delete (db);
-        db = NULL;
+int t005_SelectUT( void )
+{
+    relLog( "005_SelectUT: Testando consulta em tabela inexistente" );
+    FBConnect *db = new FBConnect( FB30PATH, FB30USER, FB30PASS );
+    if ( !db->Connected ) {
+        relLog( "ERRO CONEXAO: %s", db->ErrorMsg );
+        delete db;
         return 1;
     }
 
-    printf ("Database Connected!\n");
+    if ( db->Start( FBREAD ) || !db->InTrans ) {
+        relLog( "ERRO Transacao FBREAD" );
+        delete db;
+        return 1;
+    }
 
-    if (db->Start (FBREAD ) || ! db->InTrans) {
-        printf ("ERROR Read Transaction\n");
-        delete (db);
-        db = NULL;
-        return 1; }    
-    printf ("Read tansaction  sucessfully started!\n");
+    const char *stmt = "SELECT * FROM UNKNOWTABLE";
+    if ( db->Select( stmt ) ) {
+        relLog( "SQL rejeitado conforme esperado: %s", stmt );
+        relLog( "Mensagem do Firebird: %s", db->ErrorMsg );
+        delete db;
+        return 0;
+    }
 
-    const char *stmt= "SELECT * FROM UNKNOWTABLE";
-
-    if (db->Select (stmt)) {
-        printf ("ERROR SELECT STATEMENT: %s\n", stmt);
-        printf ("MESSAGE ERROR FROM FBConnect:%s\n", db->ErrorMsg);
-        delete (db);
-        db = NULL;
-        return 0; }    
-
-    delete (db);
-    db = NULL;
+    delete db;
     return 1;
 }
 
-/*
- *  Function t006_Select
- *
- *  This function tests if select with a blob field
- *  and print the result of selected field 
- *  
- */
-int t006_Select (void) {
-    printf ("\n--------------------------\n006_Select           TEST\n");
-    printf("BANCO------->>>>%s\n", FB30PATH);
-    FBConnect *db = new FBConnect (FB30PATH, FB30USER, FB30PASS);
-    
-    if (! db->Connected) {
-        printf ("ERRO CONEXAO %s\n", db->ErrorMsg);
-        delete (db);
-        db = NULL;
+int t006_Select( void )
+{
+    relLog( "006_Select: Leitura de campos BLOB SUB_TYPE TEXT em PROJECT" );
+    FBConnect *db = new FBConnect( FB30PATH, FB30USER, FB30PASS );
+    if ( !db->Connected ) {
+        relLog( "ERRO CONEXAO: %s", db->ErrorMsg );
+        delete db;
         return 1;
     }
 
+    if ( db->Start( FBREAD ) || !db->InTrans ) {
+        relLog( "ERRO Transacao de LEITURA" );
+        delete db;
+        return 1;
+    }
 
-    printf ("Database Connected\n");
+    const char *stmt = "SELECT PROJ_DESC, PROJ_NAME, PROJ_ID FROM PROJECT ORDER BY PROJ_ID";
+    if ( db->Select( stmt ) ) {
+        relLog( "ERRO SELECT: %s (%s)", stmt, db->ErrorMsg );
+        delete db;
+        return 1;
+    }
 
-    if (db->Start (FBREAD ) || ! db->InTrans) {
-        printf ("ERRO Transacao de LEITURA\n");
-        delete (db);
-        db = NULL;
-        return 1; }    
-    printf ("Transacao de LEITURA  iniciada com sucesso!\n");
+    int ret = db->Fetch();
+    int lidos = 0;
+    while ( !ret ) {
+        int tamanho = db->getDataSize( 0 );
+        unsigned char *dados = new unsigned char[tamanho];
+        memset( dados, '\0', tamanho );
 
-     const char *stmt= "SELECT PROJ_DESC, PROJ_NAME, PROJ_DESC  FROM PROJECT";
+        db->getColumn( tamanho, 0 );
+        string nomeProj = db->getColumn( 1 );
+        string idProj   = db->getColumn( 2 );
 
-    if (db->Select (stmt)) {
-        printf ("ERRO SELECT STATEMENT: %s\n", stmt);
-        printf ("MESSAGE ERROR FROM FBConnect:%s\n", db->ErrorMsg);
-        delete (db);
-        db = NULL;
-        return 1; }    
-
-    printf ("SELECT STATEMENT OK!\n");
-
-    int ret = db->Fetch (); // DADOS ALOCADO INTERNAMENTE
-
-    int intBlob;
-    (void)intBlob;
-    int tamanho;
-
-    do {
-   
-	// Obtem o tamanho necessario para armazenar a resposta do getColumn
-    	tamanho = db->getDataSize(0);
-
-	// aloca a variavel para armazenameneto da resposta do getColumn
-        unsigned char *dados = new unsigned char [tamanho];
-        memset (dados, '\0', tamanho);
-
-       // O getColumn vai retornar os dados que estao nas tuplas ou, caso blob, retorna o blobID
-       db->getColumn (tamanho, 0);
-
-
-
-	if( db->isBlob(0) && db->blobType(0))
-	{
-		// tamanho de caracteres para se alocar espaco
-    		int t;
-		// o retorno ira armazenar se tem um handler para trabalhar com o blob ou nao
-		int retorno;
-		// caso a alocacao do handler ocorra, chama o metodo getBlobSize
-		// para se obter o tamanho de espaco necessario para alocar os dados
-       		retorno = db->workBlob(dados) ;
-		if(retorno) {
-			// chamada do metodo para se obter a quantidade de characteres
-			t = db->getBlobSize(db->blob);
-		}
-       		//t += 1;
-        string basic_string;
-       	//	unsigned char *texto = new unsigned char [t];
-        basic_string = db->GetTextBlob();
-            //string basic_string = "Oi";
-       	//memset(texto, '\0', t);
-		//intBlob = 	db->GetTextBlob(texto);
-       	//	printf("TEXTO : [%s] \n", texto);
-        cout << basic_string << endl;
-        	t = 0;
-        	(void)t;
-	}	
-				
-   
-
-/*
-
-    	tamanho = db->getDataSize(1);
-
-    	unsigned char *dados1 = new unsigned char [tamanho];
-	string my_string;
-
-    	memset (dados1, '\0', tamanho);
-
-    	my_string = db->getColumn (tamanho, 1);
-
-    	//printf("TEXTO : [%s] \n", dados1);
-	cout << my_string << endl;
-*/
-	ret = db->Fetch();
+        if ( db->isBlob( 0 ) && db->blobType( 0 ) ) {
+            int retorno = db->workBlob( dados );
+            int t = retorno ? db->getBlobSize( db->blob ) : 0;
+            string textoBlob = db->GetTextBlob();
+            relLog( "Projeto [%s] %s (%d bytes):", idProj.c_str(), nomeProj.c_str(), t );
+            relLog( "  %s", textoBlob.c_str() );
+            lidos++;
+        }
         delete[] dados;
-    } while (!ret);
-
-
-    printf ("FETCH STATEMENT OK:\n");
+        ret = db->Fetch();
+    }
 
     db->Commit();
-    delete (db);
-    db = NULL;
-    
-    return 0;
+    delete db;
+    return ( lidos > 0 ) ? 0 : 1;
 }
 
-/*
- *  Function t007_SelectA
- *
- *  This function tests if select statement
- *  is correct
- *  
- */
-int t007_SelectA (void) {
-    printf ("\n--------------------------\n007_SelectA STATEMENT < 15    TEST\n");
-    FBConnect *db = new FBConnect (FB30PATH, FB30USER, FB30PASS);
-    
-    if (! db->Connected) {
-        printf ("CONNECTION ERROR %s\n", db->ErrorMsg);
-        delete (db);
-        db = NULL;
+int t007_SelectA( void )
+{
+    relLog( "007_SelectA: Validacao de comando SQL incompleto (< 15 chars)" );
+    FBConnect *db = new FBConnect( FB30PATH, FB30USER, FB30PASS );
+    if ( !db->Connected ) {
+        relLog( "ERRO CONEXAO: %s", db->ErrorMsg );
+        delete db;
         return 1;
     }
 
-    printf ("CONNECTED\n");
+    db->Start( FBREAD );
+    const char *stmt = "SELECT * FROM ";
+    if ( db->Select( stmt ) ) {
+        relLog( "SQL curto/invalido rejeitado OK: '%s'", stmt );
+        relLog( "Detalhe: %s", db->ErrorMsg );
+        delete db;
+        return 0;
+    }
 
-    db->Start(FBREAD);
-    if (! db->InTrans) {
-        printf ("Read Transaction ERROR\n");
-        delete (db);
-        db = NULL;
-        return 1; }    
-    printf ("Read Transaction sucessfully started!\n");
-
-    const char *stmt= "SELECT * FROM ";
-
-    if (db->Select (stmt)) {
-        printf ("ERRO SELECT STATEMENT: %s\n%s\n", stmt, db->ErrorMsg);
-        printf ("TEST SELECT STATEMENT < 15 OK!\n");
-        delete (db);
-        db = NULL;
-        return 0; }    
-
-    printf ("STATEMENT ERROR < 15 !\n");
-    delete (db);
-    db = NULL;
-    return -1;
+    delete db;
+    return 1;
 }
 
-/*
- *  Function t008_SelectB
- *
- *  This function tests if select statement
- *  is correct
- *  
- */
-int t008_SelectB (void) {
-    printf ("\n--------------------------\n008_SelectB AutoTransaction    TEST\n");
-    FBConnect *db = new FBConnect (FB30PATH, FB30USER, FB30PASS);
-    
-    if (! db->Connected) {
-        printf ("CONNECTION ERROR %s\n", db->ErrorMsg);
-        delete (db);
-        db = NULL;
+int t008_SelectB( void )
+{
+    relLog( "008_SelectB: Select com AutoTransaction em CUSTOMER" );
+    FBConnect *db = new FBConnect( FB30PATH, FB30USER, FB30PASS );
+    if ( !db->Connected ) {
+        relLog( "ERRO CONEXAO: %s", db->ErrorMsg );
+        delete db;
         return 1;
     }
 
-    printf ("Database Connected\n");
-
-    const char *stmt= "SELECT * FROM CUSTOMER";
-
-    if (db->Select (stmt)) {
-        printf ("ERRO SELECT STATEMENT: %s\n", stmt);
-        delete (db);
-        db = NULL;
-        return 1; }    
-
-    printf ("SELECT STATEMENT OK!\n");
-
-    char dados[400];
-    memset (dados, '\0', sizeof (dados));
-    int ret = db->Fetch ();
-    if (ret && ret != 100L) {
-        printf ("ERRO FETCH STATEMENT: %s\n", stmt);
-        delete (db);
-        db = NULL;
-        return 1; }    
-
-    printf ("FETCH STATEMENT OK:\n%s", dados);
-
-    db->Commit();
-
-    delete (db);
-    db = NULL;
-    return 0;
-}
-
-/*
- *  Function t009_SelectM
- *
- *  This function tests if we can get more
- *  that one field
- *  
- */
-/*
- */
-int t009_SelectM (void) {
-    printf ("\n--------------------------\n006_Select           TEST\n");
-    printf("BANCO------->>>>%s\n", FB30PATH);
-    FBConnect *db = new FBConnect (FB30PATH, FB30USER, FB30PASS);
-    
-    if (! db->Connected) {
-        printf ("ERROR CONNECTION %s\n", db->ErrorMsg);
-        delete (db);
-        db = NULL;
+    const char *stmt = "SELECT CUST_NO, CUSTOMER, CITY FROM CUSTOMER ORDER BY CUST_NO";
+    if ( db->Select( stmt ) ) {
+        relLog( "ERRO SELECT: %s", db->ErrorMsg );
+        delete db;
         return 1;
     }
 
-
-    printf ("Database Connected\n");
-
-    if (db->Start (FBREAD ) || ! db->InTrans) {
-        printf ("ERROR Read Transaction\n");
-        delete (db);
-        db = NULL;
-        return 1; }    
-    printf ("Read Transaction sucessfully started!\n");
-
-     //const char *stmt= "SELECT cust_NO FROM CUSTOMER"; // OK
-    const char *stmt= "SELECT hire_date, salary, job_grade FROM EMPLOYEE";
-    //const char *stmt= "SELECT  job_grade, salary, first_name FROM EMPLOYEE";
-    //const char *stmt= "SELECT job_grade, hire_date, salary FROM EMPLOYEE";
-    //const char *stmt= "SELECT job_grade FROM EMPLOYEE";
-     //const char *stmt= "SELECT SALARY  FROM EMPLOYEE"; //OK
-    //const char *stmt= "SELECT MAX_SALARY FROM JOB"; // OK
-    //const char *stmt= "SELECT JOB_REQUIREMENT FROM JOB";
-    //const char *stmt= "SELECT * FROM JOB";
-    // const char *stmt= "SELECT CHANGE_DATE  FROM SALARY_HISTORY";
-    //const char *stmt= "SELECT EMP_NO  FROM EMPLOYEE_PROJECT"; //OK
-    //const char *stmt= "SELECT  CONTACT_FIRST, CONTACT_LAST, CITY   FROM CUSTOMER"; //OK
-    // const char *stmt= "SELECT  CONTACT_FIRST   FROM CUSTOMER"; // OK
-    // const char *stmt= "SELECT FIRST_NAME, HIRE_DATE, SALARY  FROM EMPLOYEE";  //OK
-
-    if (db->Select (stmt)) {
-        printf ("ERRO SELECT STATEMENT: %s\n", stmt);
-        printf ("MESSAGE ERROR FROM FBConnect:%s\n", db->ErrorMsg);
-        delete (db);
-        db = NULL;
-        return 1; }    
-
-    printf ("SELECT STATEMENT OK!\n");
-
-    int ret = db->Fetch (); // Allocated data
-
-    int tamanho;
-    (void)tamanho;
-    int size0;
-    int size1;
-    int size2;
-    do {
-   
-	// Size needed to store the response
-    	size0 = db->getDataSize(0);
-    	size1 = db->getDataSize(1);
-    	size2 = db->getDataSize(2);
-
-	// variable to store the data
-        //unsigned char *dados0 = new unsigned char [size0];
-        //unsigned char *dados1 = new unsigned char [size1];
-        //unsigned char *dados2 = new unsigned char [size2];
-        //memset (dados0, '\0', size0);
-        //memset (dados1, '\0', size1);
-        //memset (dados2, '\0', size2);
-	
-	string fbc_dado0;
-	string fbc_dado1;
-	string fbc_dado2;
-
-    	fbc_dado0 = db->getColumn (size0, 0);
-    	fbc_dado1 = db->getColumn (size1, 1);
-    	fbc_dado2 = db->getColumn (size2, 2);
-
-    	//printf("TEXTO : [%s] \n", dados1);
-	cout << fbc_dado0 << endl;
-	cout << fbc_dado1 << endl;
-	cout << fbc_dado2 << endl;
-
-       //db->getColumn (dados0, 0);
-       //db->getColumn (dados1, 1);
-       //db->getColumn (dados0, 0);
-
-	
-       		//printf("Field 0 : [%s] \n", dados0);
-       		//printf("Field 1 : [%s] \n", dados1);
-       		//printf("Field 2 : [%s] \n", dados2);
-				
-	ret = db->Fetch();
-
-    } while (!ret);
-
-
-    printf ("FETCH STATEMENT OK:\n");
-
+    int qtd = 0;
+    while ( db->Fetch() == 0 ) {
+        qtd++;
+        relLog( "  Cliente %s: %-30s (%s)",
+                db->getColumn( 0 ).c_str(),
+                db->getColumn( 1 ).c_str(),
+                db->getColumn( 2 ).c_str() );
+    }
     db->Commit();
-    delete (db);
-    db = NULL;
-    
-    return 0;
+    delete db;
+    return ( qtd >= 5 ) ? 0 : 1;
 }
 
-/*
- *  Function t010_AllDataTypes
- *
- *  Tests all SQL types supported by FBConnect on TYPE_SHOWCASE
- */
-int t010_AllDataTypes (void) {
-    printf ("\n--------------------------\n010_AllDataTypes TEST\n");
-    FBConnect *db = new FBConnect (FB30PATH, FB30USER, FB30PASS);
-    if (! db->Connected) {
-        printf ("ERROR CONNECTION %s\n", db->ErrorMsg);
-        delete (db);
+int t009_SelectM( void )
+{
+    relLog( "009_SelectM: Leitura de multiplos campos tipados em EMPLOYEE" );
+    FBConnect *db = new FBConnect( FB30PATH, FB30USER, FB30PASS );
+    if ( !db->Connected ) {
+        relLog( "ERRO CONEXAO: %s", db->ErrorMsg );
+        delete db;
+        return 1;
+    }
+
+    db->Start( FBREAD );
+    const char *stmt = "SELECT HIRE_DATE, SALARY, JOB_GRADE, FIRST_NAME, LAST_NAME FROM EMPLOYEE ORDER BY EMP_NO";
+    if ( db->Select( stmt ) ) {
+        relLog( "ERRO SELECT: %s", db->ErrorMsg );
+        delete db;
+        return 1;
+    }
+
+    int count = 0;
+    while ( db->Fetch() == 0 ) {
+        string dt   = db->getColumn( db->getDataSize( 0 ), 0 );
+        string sal  = db->getColumn( db->getDataSize( 1 ), 1 );
+        string grd  = db->getColumn( db->getDataSize( 2 ), 2 );
+        string nome = db->getColumn( 3 ) + " " + db->getColumn( 4 );
+        relLog( "  %-18s | Admissao: %s | Nivel: %s | Salario: %s",
+                nome.c_str(), dt.c_str(), grd.c_str(), sal.c_str() );
+        count++;
+    }
+
+    db->Commit();
+    delete db;
+    return ( count == 7 ) ? 0 : 1;
+}
+
+int t010_AllDataTypes( void )
+{
+    relLog( "010_AllDataTypes: Testando todos os 20 tipos SQL do Firebird 5.0" );
+    FBConnect *db = new FBConnect( FB30PATH, FB30USER, FB30PASS );
+    if ( !db->Connected ) {
+        relLog( "ERRO CONEXAO: %s", db->ErrorMsg );
+        delete db;
         return 1;
     }
 
@@ -698,75 +522,65 @@ int t010_AllDataTypes (void) {
         "DT_VAL, TM_VAL, TS_VAL, NOTES_BLOB, BOOL_VAL, INT128_VAL, NUM38_VAL, DEC16_VAL, "
         "DEC34_VAL, TIMETZ_VAL, TSTZ_VAL, NULLABLE_COL "
         "FROM TYPE_SHOWCASE ORDER BY ID";
-    if (db->Select (stmt)) {
-        printf ("ERRO SELECT: %s\n", db->ErrorMsg);
-        delete (db);
+
+    if ( db->Select( stmt ) ) {
+        relLog( "ERRO SELECT: %s", db->ErrorMsg );
+        delete db;
         return 1;
     }
 
-    printf ("Colunas retornadas (getCount): %u\n", db->getCount());
-
-    int ret = db->Fetch();
-    while (!ret) {
-        cout << "----------------------------------------" << endl;
-        cout << "ID (LONG)        : [" << db->getColumn(0) << "]" << endl;
-        cout << "CODE (CHAR)      : [" << db->getColumn(1) << "]" << endl;
-        cout << "NAME (VARCHAR)   : [" << db->getColumn(2) << "]" << endl;
-        cout << "SMALL (SHORT)    : [" << db->getColumn(3) << "]" << endl;
-        cout << "BIG (INT64)      : [" << db->getColumn(4) << "]" << endl;
-        cout << "DEC (NUMERIC 15) : [" << db->getColumn(5) << "]" << endl;
-        cout << "FLT (FLOAT)      : [" << db->getColumn(6) << "]" << endl;
-        cout << "DBL (DOUBLE)     : [" << db->getColumn(7) << "]" << endl;
-        cout << "DT (DATE)        : [" << db->getColumn(8) << "]" << endl;
-        cout << "TM (TIME)        : [" << db->getColumn(9) << "]" << endl;
-        cout << "TS (TIMESTAMP)   : [" << db->getColumn(10) << "]" << endl;
-
-        string blobIdStr = db->getColumn(11);
-        if (db->isBlob(11) && db->blobType(11)) {
-            int blobLen = db->getBlobSize(db->blob);
-            string blobText = db->GetTextBlob();
-            cout << "BLOB (" << blobLen << " bytes) : [" << blobText << "]" << endl;
+    relLog( "Colunas no ResultSet (getCount): %u", db->getCount() );
+    int rows = 0;
+    while ( db->Fetch() == 0 ) {
+        rows++;
+        relLog( "--- Registro #%d ---", rows );
+        relLog( "  ID (INTEGER)     : %s", db->getColumn( 0 ).c_str() );
+        relLog( "  CODE (CHAR)      : %s", db->getColumn( 1 ).c_str() );
+        relLog( "  NAME (VARCHAR)   : %s", db->getColumn( 2 ).c_str() );
+        relLog( "  SMALL (SMALLINT) : %s", db->getColumn( 3 ).c_str() );
+        relLog( "  BIG (BIGINT)     : %s", db->getColumn( 4 ).c_str() );
+        relLog( "  DEC (NUMERIC 15) : %s", db->getColumn( 5 ).c_str() );
+        relLog( "  FLT / DBL        : %s / %s", db->getColumn( 6 ).c_str(), db->getColumn( 7 ).c_str() );
+        relLog( "  DATE / TIME      : %s / %s", db->getColumn( 8 ).c_str(), db->getColumn( 9 ).c_str() );
+        relLog( "  TIMESTAMP        : %s", db->getColumn( 10 ).c_str() );
+        db->getColumn( 11 );
+        if ( db->isBlob( 11 ) && db->blobType( 11 ) ) {
+            relLog( "  BLOB (%d B)      : %s", db->getBlobSize( db->blob ), db->GetTextBlob().c_str() );
         }
-        cout << "BOOL (BOOLEAN)   : [" << db->getColumn(12) << "]" << endl;
-        cout << "INT128           : [" << db->getColumn(13) << "]" << endl;
-        cout << "NUMERIC(38,6)    : [" << db->getColumn(14) << "]" << endl;
-        cout << "DECFLOAT(16)     : [" << db->getColumn(15) << "]" << endl;
-        cout << "DECFLOAT(34)     : [" << db->getColumn(16) << "]" << endl;
-        cout << "TIME TZ          : [" << db->getColumn(17) << "]" << endl;
-        cout << "TIMESTAMP TZ     : [" << db->getColumn(18) << "]" << endl;
-        cout << "NULLABLE_COL     : " << (db->isNull(19) ? "<NULL>" : ("[" + db->getColumn(19) + "]")) << endl;
-        ret = db->Fetch();
+        relLog( "  BOOLEAN          : %s", db->getColumn( 12 ).c_str() );
+        relLog( "  INT128           : %s", db->getColumn( 13 ).c_str() );
+        relLog( "  NUMERIC(38,6)    : %s", db->getColumn( 14 ).c_str() );
+        relLog( "  DECFLOAT(16)     : %s", db->getColumn( 15 ).c_str() );
+        relLog( "  DECFLOAT(34)     : %s", db->getColumn( 16 ).c_str() );
+        relLog( "  TIME WITH TZ     : %s", db->getColumn( 17 ).c_str() );
+        relLog( "  TIMESTAMP TZ     : %s", db->getColumn( 18 ).c_str() );
+        relLog( "  NULLABLE_COL     : %s", db->isNull( 19 ) ? "<NULL>" : db->getColumn( 19 ).c_str() );
     }
 
     db->Commit();
-    delete (db);
-    return 0;
+    delete db;
+    return ( rows == 2 ) ? 0 : 1;
 }
 
-/*
- *  Function t011_JoinsAndRollback
- *
- *  Tests multi-table JOINs and Rollback vs Commit
- */
-int t011_JoinsAndRollback (void) {
-    printf ("\n--------------------------\n011_JoinsAndRollback TEST\n");
-    FBConnect *db = new FBConnect (FB30PATH, FB30USER, FB30PASS);
-    if (! db->Connected) {
-        printf ("ERROR CONNECTION %s\n", db->ErrorMsg);
-        delete (db);
+int t011_JoinsAndRollback( void )
+{
+    relLog( "011_JoinsAndRollback: JOIN de 5 tabelas e Rollback vs Commit" );
+    FBConnect *db = new FBConnect( FB30PATH, FB30USER, FB30PASS );
+    if ( !db->Connected ) {
+        relLog( "ERRO CONEXAO: %s", db->ErrorMsg );
+        delete db;
         return 1;
     }
 
-    // 1. Testar UPDATE seguido de Rollback (nao deve persistir)
-    db->Start(FBWRITE);
-    if (db->Execute("UPDATE DEPARTMENT SET BUDGET = 9999999.99 WHERE DEPT_NO = '621'") != 0) {
-        printf ("ERRO UPDATE: %s\n", db->ErrorMsg);
-        delete (db);
+    db->Start( FBWRITE );
+    if ( db->Execute( "UPDATE DEPARTMENT SET BUDGET = 9999999.99 WHERE DEPT_NO = '621'" ) != 0 ) {
+        relLog( "ERRO UPDATE: %s", db->ErrorMsg );
+        delete db;
         return 1;
     }
     db->Rollback();
+    relLog( "Rollback() executado apos UPDATE temporario em DEPARTMENT 621" );
 
-    // 2. Consultar JOIN entre EMPLOYEE, DEPARTMENT, JOB e PROJECT
     const char *stmt =
         "SELECT E.FIRST_NAME, E.LAST_NAME, D.DEPARTMENT, D.BUDGET, J.JOB_TITLE, P.PROJ_NAME "
         "FROM EMPLOYEE E "
@@ -776,230 +590,421 @@ int t011_JoinsAndRollback (void) {
         "JOIN PROJECT P ON P.PROJ_ID = EP.PROJ_ID "
         "ORDER BY E.EMP_NO, P.PROJ_ID";
 
-    if (db->Select(stmt)) {
-        printf ("ERRO SELECT JOIN: %s\n", db->ErrorMsg);
-        delete (db);
+    if ( db->Select( stmt ) ) {
+        relLog( "ERRO SELECT JOIN: %s", db->ErrorMsg );
+        delete db;
         return 1;
     }
 
     int rows = 0;
-    int ret = db->Fetch();
-    while (!ret) {
+    while ( db->Fetch() == 0 ) {
         rows++;
-        cout << "Row " << rows << ": "
-             << db->getColumn(db->getDataSize(0), 0) << " | "
-             << db->getColumn(db->getDataSize(1), 1) << " | "
-             << db->getColumn(db->getDataSize(2), 2) << " | Budget: "
-             << db->getColumn(db->getDataSize(3), 3) << " | "
-             << db->getColumn(db->getDataSize(4), 4) << " | Proj: "
-             << db->getColumn(db->getDataSize(5), 5) << endl;
-        ret = db->Fetch();
+        relLog( "  #%d: %s %s | %s (Orc: %s) | %s",
+                rows,
+                db->getColumn( 0 ).c_str(),
+                db->getColumn( 1 ).c_str(),
+                db->getColumn( 2 ).c_str(),
+                db->getColumn( 3 ).c_str(),
+                db->getColumn( 5 ).c_str() );
     }
 
     db->Commit();
-    delete (db);
-    return (rows == 7) ? 0 : 1;
+    delete db;
+    return ( rows == 7 ) ? 0 : 1;
 }
 
-/*
- *  Function t012_ExecuteBindAndBlobWrite
- *
- *  Tests ExecuteBind (parameterized query) and SetTextBlob (writing BLOB via OO API)
- */
-int t012_ExecuteBindAndBlobWrite (void) {
-    printf ("\n--------------------------\n012_ExecuteBindAndBlobWrite TEST\n");
-    FBConnect *db = new FBConnect (FB30PATH, FB30USER, FB30PASS);
-    if (! db->Connected) {
-        printf ("ERROR CONNECTION %s\n", db->ErrorMsg);
-        delete (db);
+int t012_ExecuteBindAndBlobWrite( void )
+{
+    relLog( "012_ExecuteBindAndBlobWrite: ExecuteBind (?) e SetTextBlob" );
+    FBConnect *db = new FBConnect( FB30PATH, FB30USER, FB30PASS );
+    if ( !db->Connected ) {
+        relLog( "ERRO CONEXAO: %s", db->ErrorMsg );
+        delete db;
         return 1;
     }
 
-    // 1. Testar ExecuteBind com parametros (?)
+    db->Start( FBWRITE );
+    db->Execute( "DELETE FROM CUSTOMER WHERE CUST_NO = 1006" );
     const char *params[] = { "1006", "Nova Fronteira Tech", "Diego", "Martins", "+55-48-94444-0006", "Florianopolis", "Brazil" };
-    db->Start(FBWRITE);
-    if (db->ExecuteBind("INSERT INTO CUSTOMER (CUST_NO, CUSTOMER, CONTACT_FIRST, CONTACT_LAST, PHONE_NO, CITY, COUNTRY) VALUES (?, ?, ?, ?, ?, ?, ?)", params, 7) != 0) {
-        printf ("ERRO ExecuteBind: %s\n", db->ErrorMsg);
+    if ( db->ExecuteBind(
+            "INSERT INTO CUSTOMER (CUST_NO, CUSTOMER, CONTACT_FIRST, CONTACT_LAST, PHONE_NO, CITY, COUNTRY) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)", params, 7 ) != 0 ) {
+        relLog( "ERRO ExecuteBind: %s", db->ErrorMsg );
         db->Rollback();
-        delete (db);
+        delete db;
         return 1;
     }
     db->Commit();
+    relLog( "ExecuteBind inseriu cliente 1006 (Nova Fronteira Tech)" );
 
-    // 2. Testar SetTextBlob gravando um novo BLOB em PROJECT
     const char *novoBlob = "BLOB gravado via FBConnect::SetTextBlob usando IAttachment::createBlob e putSegment no Firebird 5.x!";
-    db->Start(FBWRITE);
-    if (db->SetTextBlob("UPDATE PROJECT SET PROJ_DESC = ? WHERE PROJ_ID = 'QAAUT'", novoBlob, (int)strlen(novoBlob)) != 0) {
-        printf ("ERRO SetTextBlob: %s\n", db->ErrorMsg);
+    db->Start( FBWRITE );
+    if ( db->SetTextBlob( "UPDATE PROJECT SET PROJ_DESC = ? WHERE PROJ_ID = 'QAAUT'", novoBlob, (int)strlen( novoBlob ) ) != 0 ) {
+        relLog( "ERRO SetTextBlob: %s", db->ErrorMsg );
         db->Rollback();
-        delete (db);
+        delete db;
         return 1;
     }
     db->Commit();
 
-    // 3. Verificar leitura do registro inserido por ExecuteBind e do BLOB atualizado por SetTextBlob
-    if (db->Select("SELECT CUSTOMER, CITY FROM CUSTOMER WHERE CUST_NO = 1006") != 0 || db->Fetch() != 0) {
-        printf ("ERRO SELECT CUSTOMER 1006: %s\n", db->ErrorMsg);
-        delete (db);
+    if ( db->Select( "SELECT PROJ_DESC FROM PROJECT WHERE PROJ_ID = 'QAAUT'" ) != 0 || db->Fetch() != 0 ) {
+        relLog( "ERRO SELECT PROJECT QAAUT: %s", db->ErrorMsg );
+        delete db;
         return 1;
     }
-    cout << "Cliente via ExecuteBind: " << db->getColumn(0) << " (" << db->getColumn(1) << ")" << endl;
-    db->Commit();
-
-    if (db->Select("SELECT PROJ_DESC FROM PROJECT WHERE PROJ_ID = 'QAAUT'") != 0 || db->Fetch() != 0) {
-        printf ("ERRO SELECT PROJECT QAAUT: %s\n", db->ErrorMsg);
-        delete (db);
-        return 1;
-    }
-    db->getColumn(0);
+    db->getColumn( 0 );
     string blobLido = db->GetTextBlob();
-    cout << "BLOB gravado/lido      : [" << blobLido << "]" << endl;
+    relLog( "BLOB lido apos SetTextBlob: %s", blobLido.c_str() );
     db->Commit();
 
-    delete (db);
-    return (blobLido == novoBlob) ? 0 : 1;
+    delete db;
+    return ( blobLido == novoBlob ) ? 0 : 1;
 }
 
-/*
- *  Function t013_NewUtilities
- *
- *  Tests Ping, Reconnect, SelectBind, Column-by-name, Typed Getters,
- *  getRowMap/getRowVector, ExecuteBatch, getAffectedRows, RETURNING, and getNextSequence
- */
-int t013_NewUtilities (void) {
-    printf ("\n--------------------------\n013_NewUtilities TEST\n");
-    FBConnect *db = new FBConnect (FB30PATH, FB30USER, FB30PASS);
-    if (! db->Connected) {
-        printf ("ERROR CONNECTION %s\n", db->ErrorMsg);
-        delete (db);
+int t013_NewUtilities( void )
+{
+    relLog( "013_NewUtilities: Ping, Reconnect, Sequence, Batch, SelectBind, RETURNING" );
+    FBConnect *db = new FBConnect( FB30PATH, FB30USER, FB30PASS );
+    if ( !db->Connected ) {
+        relLog( "ERRO CONEXAO: %s", db->ErrorMsg );
+        delete db;
         return 1;
     }
 
-    // 1. Ping & Reconnect
-    if (!db->Ping()) {
-        printf ("ERRO Ping\n");
-        delete (db);
+    if ( !db->Ping() || db->Reconnect() != 0 || !db->Ping() ) {
+        relLog( "ERRO em Ping/Reconnect: %s", db->ErrorMsg );
+        delete db;
         return 1;
     }
-    if (db->Reconnect() != 0 || !db->Ping()) {
-        printf ("ERRO Reconnect: %s\n", db->ErrorMsg);
-        delete (db);
-        return 1;
-    }
-    printf ("Ping & Reconnect OK!\n");
+    relLog( "1) Ping() e Reconnect() validados com sucesso" );
 
-    // 2. Sequence / Generator
-    db->Start(FBWRITE);
-    db->Execute("RECREATE SEQUENCE SEQ_TESTE START WITH 100");
+    db->Start( FBWRITE );
+    db->Execute( "RECREATE SEQUENCE SEQ_TESTE START WITH 100" );
     db->Commit();
-    int64_t seq1 = db->getNextSequence("SEQ_TESTE", 1);
-    int64_t seq2 = db->getNextSequence("SEQ_TESTE", 5);
-    printf ("Sequence SEQ_TESTE: %lld -> %lld\n", (long long)seq1, (long long)seq2);
-    if (seq1 != 100 || seq2 != 105) {
-        delete (db);
+    int64_t seq1 = db->getNextSequence( "SEQ_TESTE", 1 );
+    int64_t seq2 = db->getNextSequence( "SEQ_TESTE", 5 );
+    relLog( "2) Sequence SEQ_TESTE: %lld -> %lld", (long long)seq1, (long long)seq2 );
+    if ( seq1 != 100 || seq2 != 105 ) {
+        delete db;
         return 1;
     }
 
-    // 3. ExecuteBatch + getAffectedRows
+    db->Start( FBWRITE );
+    db->Execute( "DELETE FROM CUSTOMER WHERE CUST_NO IN (2001, 2002, 2003)" );
     vector<vector<string>> batchRows = {
-        { "2001", "Alfa Tech", "Bruno", "Dias", "+55-11-91111-2001", "Santos", "Brazil" },
-        { "2002", "Beta Cloud", "Carla", "Melo", "+55-21-92222-2002", "Niteroi", "Brazil" },
-        { "2003", "Gama Data", "Daniel", "Paz", "+55-31-93333-2003", "Uberlandia", "Brazil" }
+        { "2001", "Alfa Tech",  "Bruno",  "Dias", "+55-11-91111-2001", "Santos",     "Brazil" },
+        { "2002", "Beta Cloud", "Carla",  "Melo", "+55-21-92222-2002", "Niteroi",    "Brazil" },
+        { "2003", "Gama Data",  "Daniel", "Paz",  "+55-31-93333-2003", "Uberlandia", "Brazil" }
     };
-    db->Start(FBWRITE);
     int batchCount = db->ExecuteBatch(
-        "INSERT INTO CUSTOMER (CUST_NO, CUSTOMER, CONTACT_FIRST, CONTACT_LAST, PHONE_NO, CITY, COUNTRY) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO CUSTOMER (CUST_NO, CUSTOMER, CONTACT_FIRST, CONTACT_LAST, PHONE_NO, CITY, COUNTRY) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
         batchRows
     );
-    printf ("ExecuteBatch inseriu %d linhas (getAffectedRows = %llu)\n",
-            batchCount, (unsigned long long)db->getAffectedRows());
+    relLog( "3) ExecuteBatch inseriu %d linhas (getAffectedRows = %llu)",
+            batchCount, (unsigned long long)db->getAffectedRows() );
     db->Commit();
-    if (batchCount != 3 || db->getAffectedRows() != 3) {
-        delete (db);
+    if ( batchCount != 3 || db->getAffectedRows() != 3 ) {
+        delete db;
         return 1;
     }
 
-    // 4. SelectBind + acesso por nome de coluna + Getters tipados + getRowMap
     const char *bindParams[] = { "621", "10000.00" };
-    if (db->SelectBind("SELECT EMP_NO, FIRST_NAME, LAST_NAME, SALARY FROM EMPLOYEE WHERE DEPT_NO = ? AND SALARY >= ? ORDER BY EMP_NO",
-                       bindParams, 2) != 0) {
-        printf ("ERRO SelectBind: %s\n", db->ErrorMsg);
-        delete (db);
+    if ( db->SelectBind(
+            "SELECT EMP_NO, FIRST_NAME, LAST_NAME, SALARY FROM EMPLOYEE "
+            "WHERE DEPT_NO = ? AND SALARY >= ? ORDER BY EMP_NO",
+            bindParams, 2 ) != 0 ) {
+        relLog( "ERRO SelectBind: %s", db->ErrorMsg );
+        delete db;
         return 1;
     }
 
-    while (db->Fetch() == 0) {
-        long empNo    = db->getInt("EMP_NO");
-        string nome   = db->getColumn("FIRST_NAME") + " " + db->getColumn("LAST_NAME");
-        double salary = db->getDouble("SALARY");
+    while ( db->Fetch() == 0 ) {
+        long empNo    = db->getInt( "EMP_NO" );
+        string nome   = db->getColumn( "FIRST_NAME" ) + " " + db->getColumn( "LAST_NAME" );
+        double salary = db->getDouble( "SALARY" );
         map<string, string> rowMap = db->getRowMap();
-        printf ("SelectBind Row: EMP_NO=%ld | Nome=%s | Salary=%.2f | Map[FIRST_NAME]=%s\n",
-                empNo, nome.c_str(), salary, rowMap["FIRST_NAME"].c_str());
+        relLog( "4) SelectBind: EMP=%ld | %s | R$ %.2f | Map=%s",
+                empNo, nome.c_str(), salary, rowMap["FIRST_NAME"].c_str() );
     }
     db->Commit();
 
-    // 5. UPDATE ... RETURNING no Firebird 5.x via SelectBind
     const char *updParams[] = { "2001" };
-    db->Start(FBWRITE);
-    if (db->SelectBind("UPDATE CUSTOMER SET CITY = 'Campinas' WHERE CUST_NO = ? RETURNING CUST_NO, CUSTOMER, CITY",
-                       updParams, 1) != 0 || db->Fetch() != 0) {
-        printf ("ERRO UPDATE RETURNING: %s\n", db->ErrorMsg);
+    db->Start( FBWRITE );
+    if ( db->SelectBind(
+            "UPDATE CUSTOMER SET CITY = 'Campinas' WHERE CUST_NO = ? RETURNING CUST_NO, CUSTOMER, CITY",
+            updParams, 1 ) != 0 || db->Fetch() != 0 ) {
+        relLog( "ERRO UPDATE RETURNING: %s", db->ErrorMsg );
         db->Rollback();
-        delete (db);
+        delete db;
         return 1;
     }
-    printf ("UPDATE RETURNING: CUST_NO=%ld | CUSTOMER=%s | NEW_CITY=%s\n",
-            db->getInt("CUST_NO"), db->getColumn("CUSTOMER").c_str(), db->getColumn("CITY").c_str());
+    relLog( "5) UPDATE RETURNING: CUST_NO=%ld | %s | Nova Cidade=%s",
+            db->getInt( "CUST_NO" ), db->getColumn( "CUSTOMER" ).c_str(), db->getColumn( "CITY" ).c_str() );
     db->Commit();
 
-    delete (db);
+    delete db;
     return 0;
 }
 
-int main (int argc, char* argv[]) {
-     (void)argc;
-     (void)argv;
-     printf("############################################\n");
+// ===========================================================================
+// TABELA DE DESCRICAO DOS TESTES E INTERFACE MauWin
+// ===========================================================================
 
-    if (t000_SetupDatabase()) { printf ("\n000_SetupDatabase FAIL\n--------------------------\n\n"); return 1; }
-    else                        printf ("\n000_SetupDatabase PASS\n--------------------------\n\n");
+struct CasoTeste {
+    const char *codigo;
+    const char *tituloMenu;
+    int       (*funcao)( void );
+};
 
-    if (t002_ConexaoOK()) { printf ("\n002_ConexaoOK  FAIL\n--------------------------\n\n"); return 1; }
-    else                    printf ("\n002_ConexaoOK  PASS\n--------------------------\n\n");
+static const CasoTeste g_testes[] = {
+    { "t000", "t000 - SetupDatabase (DDL + Seed de 8 tabelas)",     t000_SetupDatabase         },
+    { "t002", "t002 - ConexaoOK (Conexao valida Firebird 5.0)",     t002_ConexaoOK             },
+    { "t003", "t003 - ConexaoNOK (Rejeicao de senha/host invalido)",t003_ConexaoNOK            },
+    { "t004", "t004 - StartTrans (Transacoes FBREAD e FBWRITE)",    t004_StartTrans            },
+    { "t005", "t005 - SelectUT (Erro em tabela inexistente)",       t005_SelectUT              },
+    { "t006", "t006 - Select BLOB (Leitura de BLOB SUB_TYPE TEXT)", t006_Select                },
+    { "t007", "t007 - SelectA (Rejeicao de SQL curto/incompleto)",  t007_SelectA               },
+    { "t008", "t008 - SelectB (AutoTransaction em CUSTOMER)",       t008_SelectB               },
+    { "t009", "t009 - SelectM (Multiplos campos em EMPLOYEE)",      t009_SelectM               },
+    { "t010", "t010 - AllDataTypes (20 tipos do Firebird 5.0)",     t010_AllDataTypes          },
+    { "t011", "t011 - JoinsAndRollback (JOIN 5 tabelas + Rollback)",t011_JoinsAndRollback      },
+    { "t012", "t012 - ExecuteBind (?) e SetTextBlob (Escrita BLOB)",t012_ExecuteBindAndBlobWrite},
+    { "t013", "t013 - NewUtilities (Ping, Seq, Batch, RETURNING)",  t013_NewUtilities          },
+};
+static const int QTD_TESTES = sizeof( g_testes ) / sizeof( g_testes[0] );
 
-    if (t003_ConexaoNOK()){ printf ("\n003_ConexaoNOK FAIL\n--------------------------\n\n"); return 1; }
-    else                    printf ("\n003_ConexaoNOK PASS\n--------------------------\n\n");
-   
-    if (t004_StartTrans()){ printf ("\n004_StartTrans FAIL\n--------------------------\n\n"); return 1; }
-    else                    printf ("\n004_StartTrans PASS\n--------------------------\n\n");
-    
-    if (t005_SelectUT())  { printf ("\n005_SelectUT   FAIL\n--------------------------\n\n"); return 1; }
-    else                    printf ("\n005_SelectUT   PASS\n--------------------------\n\n");
+enum {
+    CAMPO_HORA = 0,
+    CAMPO_PLACAR = 1,
+    CAMPO_ULTIMO = 2
+};
 
-    if (t006_Select()    ){ printf ("\n006_Select     FAIL\n--------------------------\n\n"); return 1; }
-    else                    printf ("\n006_Select     PASS\n--------------------------\n\n");
+static void aplicaTema( MauWin &janela )
+{
+    janela.setCor( MW_BORDA,    COLOR_CYAN,  MW_PADRAO );
+    janela.setCor( MW_TITULO,   COLOR_BLACK, COLOR_CYAN );
+    janela.setCor( MW_DESTAQUE, COLOR_BLACK, COLOR_YELLOW );
+    janela.setCor( MW_ROTULO,   COLOR_CYAN,  MW_PADRAO );
+    janela.setCor( MW_VALOR,    MW_PADRAO,   MW_PADRAO, A_BOLD );
+}
 
-    if (t007_SelectA()   ){ printf ("\n007_SelectA    FAIL\n--------------------------\n\n"); return 1; }
-    else                    printf ("\n007_SelectA    PASS\n--------------------------\n\n");
+// APRESENTA O RELATORIO DO(S) TESTE(S) EM UMA JANELA MauWin COM ROLAGEM
+static void mostraResultadoMauWin( MauWin &status, const char *tituloJanela, int passou, int falhou )
+{
+    unsigned int totalLinhas = (unsigned int)g_linhasRelatorio.size() + 12;
+    if ( totalLinhas < 30 ) totalLinhas = 30;
 
-    if (t008_SelectB()   ){ printf ("\n008_SelectB    FAIL\n--------------------------\n\n"); return 1; }
-    else                    printf ("\n008_SelectB    PASS\n--------------------------\n\n");
+    winText texto;
+    memset( &texto, 0, sizeof( texto ) );
 
-    if (t009_SelectM()   ){ printf ("\n009_SelectM    FAIL\n--------------------------\n\n"); return 1; }
-    else                    printf ("\n009_SelectM    PASS\n--------------------------\n\n");
+    MauWin janela( 20, 76, 3, 2, 1 );
+    if ( janela.errorCode ) return;
+    aplicaTema( janela );
 
-    if (t010_AllDataTypes()){ printf ("\n010_AllDataTypes FAIL\n--------------------------\n\n"); return 1; }
-    else                      printf ("\n010_AllDataTypes PASS\n--------------------------\n\n");
+    // SE HOUVE FALHA, BORDA E TITULO EM VERMELHO; SE PASSOU, TITULO EM VERDE
+    if ( falhou > 0 ) {
+        janela.setCor( MW_BORDA,  COLOR_RED,   MW_PADRAO, A_BOLD );
+        janela.setCor( MW_TITULO, COLOR_WHITE, COLOR_RED, A_BOLD );
+    } else {
+        janela.setCor( MW_BORDA,  COLOR_GREEN, MW_PADRAO );
+        janela.setCor( MW_TITULO, COLOR_BLACK, COLOR_GREEN, A_BOLD );
+    }
 
-    if (t011_JoinsAndRollback()){ printf ("\n011_JoinsAndRollback FAIL\n--------------------------\n\n"); return 1; }
-    else                          printf ("\n011_JoinsAndRollback PASS\n--------------------------\n\n");
+    janela.setTitulo( S( tituloJanela ) );
+    janela.textSet( &texto, totalLinhas );
 
-    if (t012_ExecuteBindAndBlobWrite()){ printf ("\n012_ExecuteBindAndBlobWrite FAIL\n--------------------------\n\n"); return 1; }
-    else                                 printf ("\n012_ExecuteBindAndBlobWrite PASS\n--------------------------\n\n");
+    char resumoTopo[72];
+    snprintf( resumoTopo, sizeof( resumoTopo ),
+              "RESULTADO: %s   |   APROVADOS: %d   |   FALHAS: %d",
+              ( falhou == 0 ) ? "APROVADO (PASS)" : "FALHOU (FAIL)", passou, falhou );
+    janela.textAppend( 2u, resumoTopo );
+    janela.textNewLine();
+    janela.textAppend( '=' );
 
-    if (t013_NewUtilities()){ printf ("\n013_NewUtilities FAIL\n--------------------------\n\n"); return 1; }
-    else                      printf ("\n013_NewUtilities PASS\n--------------------------\n\n");
-   
+    for ( size_t i = 0; i < g_linhasRelatorio.size(); ++i ) {
+        if ( g_linhasRelatorio[i] == "---SEP---" ) {
+            janela.textAppend( '-' );
+        } else if ( g_linhasRelatorio[i].empty() ) {
+            janela.textNewLine();
+        } else {
+            janela.textAppend( 2u, 70u, S( g_linhasRelatorio[i].c_str() ) );
+            janela.textNewLine();
+        }
+    }
+
+    janela.textAppend( '=' );
+    janela.textAppend( 2u, S( "Use Setas / PgUp / PgDn / Home / End para rolar, ESC para voltar" ) );
+    janela.textNewLine();
+
+    int visiveis = 20 - 3;
+    int ultima   = (int)texto.PosLin > visiveis ? (int)texto.PosLin - visiveis : 0;
+    int topo     = 0;
+
+    janela.textShow( topo );
+
+    while ( 1 ) {
+        int tecla = janela.getKey();
+        status.relogio( CAMPO_HORA, S( "Db" ) );
+
+        if ( tecla == ERR ) continue;
+        if ( tecla == ESCAPE || tecla == 'q' || tecla == 'Q' || tecla == '\n' || tecla == KEY_ENTER ) break;
+
+        if ( ( tecla == KEY_DOWN || tecla == '+' ) && topo < ultima ) topo++;
+        if ( ( tecla == KEY_UP   || tecla == '-' ) && topo > 0 )      topo--;
+        if ( tecla == KEY_NPAGE ) topo = topo + visiveis > ultima ? ultima : topo + visiveis;
+        if ( tecla == KEY_PPAGE ) topo = topo - visiveis < 0 ? 0 : topo - visiveis;
+        if ( tecla == KEY_HOME )  topo = 0;
+        if ( tecla == KEY_END )   topo = ultima;
+
+        janela.textShow( topo );
+    }
+}
+
+static int modoBatch( void )
+{
+    g_modoBatch = true;
+    printf( "############################################\n" );
+    printf( "FBConnect 5.0 - Bateria Completa de Testes\n" );
+    printf( "############################################\n" );
+
+    int falhas = 0;
+    for ( int i = 0; i < QTD_TESTES; ++i ) {
+        limpaRelatorio();
+        printf( "\n--------------------------------------------\n" );
+        int rc = g_testes[i].funcao();
+        if ( rc != 0 ) {
+            printf( ">>> %s: FAIL <<<\n", g_testes[i].codigo );
+            falhas++;
+        } else {
+            printf( ">>> %s: PASS <<<\n", g_testes[i].codigo );
+        }
+    }
+    printf( "\n============================================\n" );
+    printf( "Resumo Final: %d/%d testes aprovados.\n", QTD_TESTES - falhas, QTD_TESTES );
+    return ( falhas == 0 ) ? 0 : 1;
+}
+
+int main( int argc, char *argv[] )
+{
+    for ( int i = 1; i < argc; ++i ) {
+        if ( strcmp( argv[i], "--batch" ) == 0 || strcmp( argv[i], "-b" ) == 0 ) {
+            return modoBatch();
+        }
+    }
+
+    if ( !isatty( STDIN_FILENO ) || !isatty( STDOUT_FILENO ) ) {
+        return modoBatch();
+    }
+
+    setlocale( LC_ALL, "" );
+    initscr();
+    noecho();
+    curs_set( 0 );
+
+    if ( LINES < 24 || COLS < 80 ) {
+        endwin();
+        return modoBatch();
+    }
+
+    // BARRA DE STATUS SUPERIOR
+    MauWin status( 3, 80, 0, 0, 1 );
+    status.setCor( MW_TEXTO,  COLOR_WHITE,  COLOR_BLUE );
+    status.setCor( MW_BORDA,  COLOR_CYAN,   COLOR_BLUE );
+    status.setCor( MW_ROTULO, COLOR_CYAN,   COLOR_BLUE );
+    status.setCor( MW_VALOR,  COLOR_YELLOW, COLOR_BLUE, A_BOLD );
+
+    status.setVar( CAMPO_HORA,   1, 2,  S( "Hora:" ),   19 );
+    status.setVar( CAMPO_PLACAR, 1, 29, S( "Placar:" ), 18 );
+    status.setVar( CAMPO_ULTIMO, 1, 55, S( "Ultimo:" ), 16 );
+
+    int totalPassou = 0;
+    int totalFalhou = 0;
+    status.printVar( CAMPO_PLACAR, S( "0 OK / 0 ERRO" ) );
+    status.printVar( CAMPO_ULTIMO, S( "Aguardando..." ) );
+
+    // MONTA O MENU: OPCAO 0 = TODOS OS TESTES, SEGUIDA DE CADA TESTE INDIVIDUAL E SAIR
+    const int TOTAL_ITENS_MENU = QTD_TESTES + 2;
+    winMenu itens[ TOTAL_ITENS_MENU ];
+    memset( itens, 0, sizeof( itens ) );
+
+    snprintf( itens[0].label, MAXVARLEN, ">>> EXECUTAR TODOS OS TESTES (t000 a t013) <<<" );
+    for ( int i = 0; i < QTD_TESTES; ++i ) {
+        snprintf( itens[i + 1].label, MAXVARLEN, "%s", g_testes[i].tituloMenu );
+    }
+    snprintf( itens[QTD_TESTES + 1].label, MAXVARLEN, "Sair" );
+
+    while ( 1 ) {
+        clear();
+        refresh();
+        status.show();
+        status.relogio( CAMPO_HORA, S( "Db" ) );
+
+        MauWin menuWin( 19, 68, 4, 6, 1 );
+        aplicaTema( menuWin );
+        menuWin.menuSet( itens, S( " SUITE DE TESTES FBConnect 5.0 (Escolha o teste, ESC sai)" ), TOTAL_ITENS_MENU );
+
+        int escolha = menuWin.menu( 0 );
+        if ( escolha < 0 || escolha == QTD_TESTES + 1 ) break;
+
+        limpaRelatorio();
+        int passou = 0;
+        int falhou = 0;
+        char tituloRel[80];
+
+        if ( escolha == 0 ) {
+            // EXECUTA TODA A BATERIA DE TESTES
+            for ( int i = 0; i < QTD_TESTES; ++i ) {
+                int rc = g_testes[i].funcao();
+                if ( rc == 0 ) {
+                    passou++;
+                    totalPassou++;
+                    relLog( ">>> RESULTADO %s: [APROVADO / PASS] <<<", g_testes[i].codigo );
+                } else {
+                    falhou++;
+                    totalFalhou++;
+                    relLog( ">>> RESULTADO %s: [FALHOU / FAIL] <<<", g_testes[i].codigo );
+                }
+                g_linhasRelatorio.push_back( "---SEP---" );
+            }
+            snprintf( tituloRel, sizeof( tituloRel ), " BATERIA COMPLETA FBConnect 5.0 (%d/%d PASS)", passou, QTD_TESTES );
+        } else {
+            // EXECUTA O TESTE INDIVIDUAL ESCOLHIDO
+            int idx = escolha - 1;
+            int rc  = g_testes[idx].funcao();
+            if ( rc == 0 ) {
+                passou = 1;
+                totalPassou++;
+                relLog( ">>> RESULTADO %s: [APROVADO / PASS] <<<", g_testes[idx].codigo );
+            } else {
+                falhou = 1;
+                totalFalhou++;
+                relLog( ">>> RESULTADO %s: [FALHOU / FAIL] <<<", g_testes[idx].codigo );
+            }
+            snprintf( tituloRel, sizeof( tituloRel ), " RESULTADO: %s (setas rolam, ESC volta)", g_testes[idx].tituloMenu );
+        }
+
+        // ATUALIZA PLACAR E STATUS NA BARRA SUPERIOR
+        char placarStr[32], ultimoStr[32];
+        snprintf( placarStr, sizeof( placarStr ), "%d OK / %d ERRO", totalPassou, totalFalhou );
+        status.printVar( CAMPO_PLACAR, placarStr );
+
+        if ( falhou == 0 ) {
+            snprintf( ultimoStr, sizeof( ultimoStr ), "PASS (%d OK)", passou );
+            status.printVar( CAMPO_ULTIMO, ultimoStr, MauWin::cor( COLOR_BLACK, COLOR_GREEN, A_BOLD ) );
+        } else {
+            snprintf( ultimoStr, sizeof( ultimoStr ), "FAIL (%d ERRO)", falhou );
+            status.printVar( CAMPO_ULTIMO, ultimoStr, MauWin::cor( COLOR_WHITE, COLOR_RED, A_BOLD ) );
+        }
+
+        clear();
+        refresh();
+        status.show();
+        status.relogio( CAMPO_HORA, S( "Db" ) );
+
+        mostraResultadoMauWin( status, tituloRel, passou, falhou );
+    }
+
+    endwin();
     return 0;
-}    
-
+}

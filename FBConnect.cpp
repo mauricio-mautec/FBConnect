@@ -59,8 +59,6 @@ FBConnect::FBConnect (const char * banco, const char * user, const char * senha,
     this->dbCharset = charset ? charset : "UTF8";
 
     this->connectInternal();
-
-    printf ("FBCONNECT VERSAO: %.1f (Firebird 5.x)\n", FBCONNECT_VERSAO);
 }
 
 int FBConnect::connectInternal (void)
@@ -196,7 +194,6 @@ FBConnect::~FBConnect()
     this->UTIL        = NULL;
     this->InTrans     = false;
     this->Connected   = false;
-    printf ("DESTRUCTOR OK\n");
 }
 
 bool FBConnect::Ping (void)

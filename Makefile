@@ -1,29 +1,40 @@
 CXX      := g++
 CXXFLAGS := -Wall -Wextra -ggdb -I/usr/include/firebird
-LDFLAGS  := -lfbclient
+LDFLAGS  := -lfbclient -lncursesw
 
-TARGET   := FBConnectTest
-OBJS     := FBConnect.o FBConnectTest.o
+TARGETS  := FBConnectTest exemploFBConnect
+OBJS     := FBConnect.o MauWin.o FBConnectTest.o exemploFBConnect.o
 
-.PHONY: all clean run valgrind
+.PHONY: all clean run run-exemplo valgrind
 
-all: $(TARGET)
+all: $(TARGETS)
 
-$(TARGET): $(OBJS)
+FBConnectTest: FBConnect.o MauWin.o FBConnectTest.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
+
+exemploFBConnect: FBConnect.o MauWin.o exemploFBConnect.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
 
 FBConnect.o: FBConnect.cpp FBConnect.h
 	$(CXX) $(CXXFLAGS) -c FBConnect.cpp -o $@
 
-FBConnectTest.o: FBConnectTest.cpp FBConnect.h
+MauWin.o: MauWin.cpp MauWin.h
+	$(CXX) $(CXXFLAGS) -c MauWin.cpp -o $@
+
+FBConnectTest.o: FBConnectTest.cpp FBConnect.h MauWin.h
 	$(CXX) $(CXXFLAGS) -c FBConnectTest.cpp -o $@
 
-run: $(TARGET)
-	./$(TARGET)
+exemploFBConnect.o: exemploFBConnect.cpp FBConnect.h MauWin.h
+	$(CXX) $(CXXFLAGS) -c exemploFBConnect.cpp -o $@
 
-valgrind: $(TARGET)
-	valgrind --leak-check=full ./$(TARGET)
+run: FBConnectTest
+	./FBConnectTest
+
+run-exemplo: exemploFBConnect
+	./exemploFBConnect
+
+valgrind: FBConnectTest
+	valgrind --leak-check=full ./FBConnectTest --batch
 
 clean:
-	rm -f $(OBJS) $(TARGET) a.out
-
+	rm -f $(OBJS) $(TARGETS) a.out
