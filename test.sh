@@ -1,10 +1,10 @@
 #!/bin/bash
-clear
-rm a.out
-rm FBConnect.o
+set -e
 
-gcc -c -ggdb FBConnect.cpp -I/usr/include/firebird -lstdc++ -lfbclient
-gcc FBConnectTest.cpp FBConnect.o -ggdb -I/usr/include/firebird -lstdc++ -lfbclient
-#valgrind --leak-check=yes ./a.out
-#gdb a.out
-./a.out
+clear
+cd "$(dirname "$0")"
+make clean
+make
+#valgrind --leak-check=yes ./FBConnectTest
+#gdb ./FBConnectTest
+./FBConnectTest

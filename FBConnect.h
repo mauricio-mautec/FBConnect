@@ -1,27 +1,26 @@
-#define FBCONNECT_VERSAO 0.1
-// 27-DEC-17 M.JUNQUEIRA -
+#ifndef FBCONNECT_H
+#define FBCONNECT_H
+
+#define FBCONNECT_VERSAO 5.0
+// Ported to Firebird 5.x OO API
 
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdint.h>
 #include <string>
-
-#if defined(__cplusplus) && (__cplusplus >= 201103L)
-#include <atomic>
-typedef std::atomic_int FbSampleAtomic;
-#else
-typedef int FbSampleAtomic;
-#endif
 
 #include <ibase.h>
 #include <firebird/Interface.h>
 
+#ifndef FB_DLL_EXPORT
 #if defined(_WIN32)
 #define FB_DLL_EXPORT __declspec(dllexport)
 #elif defined(__APPLE__)
 #define FB_DLL_EXPORT __attribute__((visibility("default")))
 #else
 #define FB_DLL_EXPORT
+#endif
 #endif
 
 template <typename T>
@@ -42,38 +41,46 @@ using namespace std;
 #define FBREAD  '1'
 #define FBWRITE '2'
 
+// Firebird 5.x SQL Data Type & DPB Constants
+#ifndef isc_dpb_set_bind
+#define isc_dpb_set_bind     89
+#endif
+#ifndef SQL_BOOLEAN
+#define SQL_BOOLEAN          32764
+#endif
+#ifndef SQL_DEC16
+#define SQL_DEC16            32760
+#endif
+#ifndef SQL_DEC34
+#define SQL_DEC34            32762
+#endif
+#ifndef SQL_INT128
+#define SQL_INT128           32752
+#endif
+#ifndef SQL_TIME_TZ
+#define SQL_TIME_TZ          32756
+#endif
+#ifndef SQL_TIMESTAMP_TZ
+#define SQL_TIMESTAMP_TZ     32754
+#endif
+#ifndef SQL_TIME_TZ_EX
+#define SQL_TIME_TZ_EX       32750
+#endif
+#ifndef SQL_TIMESTAMP_TZ_EX
+#define SQL_TIMESTAMP_TZ_EX  32748
+#endif
+
+#define FB_BLOB_SEGMENT_SIZE 4096
+
 typedef struct fbcol {
     
     const char *name;
     unsigned   typeData;
     unsigned   subData; // if 0 binary, 1 text
     unsigned   length;
-    //unsigned   blobLength;
     unsigned   offset;
+    unsigned   nullOffset;
 } FBCOL;
-
-struct fbc_tm
-    {
-      int tm_sec;
-      int tm_min;
-      int tm_hour;
-      int tm_mday;
-      int tm_mon;
-      int tm_year;
-      int tm_wday;
-      int tm_yday;
-      int tm_isdst;
-
-    # ifdef __USE_BSD
-      long int tm_gmtoff;       
-      __const char *tm_zone;   
-    # else
-      long int __tm_gmtoff;   
-      __const char *__tm_zone;
-    # endif
-    };
-
-
 
 
 class FBConnect
@@ -93,51 +100,41 @@ IMetadataBuilder *BUILDER;
 IStatement       *STATEMENT;
 
 int Prepare (const char *stmt);
+void closeQueryResources (IStatus *status);
 
 FBCOL          *FBCol;
 unsigned char  *BufferData;
 unsigned        BufferSize;   
 unsigned        FCount;
 
-isc_blob_handle BlobHandler;
-isc_db_handle   BlobDbHandle;
-isc_tr_handle   BlobTransHandle;
-short           BlobSegmentLen;
-char            BlobSegment[8];
-long            BlobStat;
-int		BlobNumChar;
+char            BlobSegment[FB_BLOB_SEGMENT_SIZE];
+int             BlobNumChar;
 ISC_QUAD        BlobID;
-unsigned char            BlobAddress; 
-
-
 
 public:
 unsigned        getCount (void);
+const char*     getColumnName (int col);
+string          getServerVersion (void);
 char            ErrorMsg[356];
 
 unsigned char   Status;
 bool            Connected;
 bool            InTrans;
-
-bool 		isFetchOK;
+bool            isFetchOK;
 
 IBlob*          blob;
-//int  GetTextBlob    (char *); 
-//int  GetTextBlob    (unsigned char *, int); 
 string GetTextBlob ();
 
 int  GetTextBlob    (unsigned char *); 
 int  GetFileBlob    (FILE *blob);
-int  SetTextBlob    (char *, char *, int);
-int  SetFileBlob    (char *query, FILE *blob, int bloblen);
+int  SetTextBlob    (const char *query, const char *texto, int bloblen);
+int  SetFileBlob    (const char *query, FILE *blob, int bloblen);
 int  isBlob(int);
 int  blobType(int);
-//int  workBlob (unsigned char *);
+int  isNull(int col);
 int  workBlob (unsigned char *);
 
-
-
-FBConnect (const char * banco, const char * user , const char * senha );
+FBConnect (const char * banco, const char * user , const char * senha, const char * charset = "UTF8");
 ~FBConnect();
 
 // INICIA UMA TRANSACAO RO/RW
@@ -147,14 +144,17 @@ int Commit          (void);
 int CommitRetaining (void);
 
 // SELECT COM RETORNO DE DADOS
-//int getColumn(unsigned char *, int col);
+string getColumn(int col);
 string getColumn(int tam, int col);
 int getRow          (unsigned char *);
 int Fetch           (void);
 int getSize         (void);
 int getDataSize     (int col);
-int Select          (const char *stmt);                               // RETURN MANY ROWS
-int Execute         (const char *stmt);                               // RETURN ONE  ROWS 
-int ExecuteBind     (const char *stmt, char **dados, int dimensao);   // EXECUTE MANY TIMES
+int Select          (const char *stmt);                                     // RETURN MANY ROWS
+int Execute         (const char *stmt);                                     // EXECUTE DDL / DML
+int ExecuteBind     (const char *stmt, const char **dados, int dimensao);   // EXECUTE WITH PARAMETERS
+int ExecuteBind     (const char *stmt, char **dados, int dimensao);         // EXECUTE WITH PARAMETERS
 int getBlobSize(IBlob *); 
-}; //IbaseConnect
+}; //FBConnect
+
+#endif // FBCONNECT_H
