@@ -145,6 +145,19 @@ static bool isDmlReturningStmt(const char *stmt)
             strncasecmp(stmt, "MERGE",  5) == 0);
 }
 
+// PARAMETROS SAO ENVIADOS COMO CHAR/VARCHAR: O FIREBIRD NAO ACEITA MAIS QUE FB_MAX_PARAM_LEN BYTES
+static bool paramsWithinLimit(const char **dados, int dimensao, const char *fn, char *err, size_t errSize)
+{
+    for (int i = 0; i < dimensao; ++i) {
+        if (dados[i] && strlen(dados[i]) > FB_MAX_PARAM_LEN) {
+            snprintf(err, errSize, "FBConnect::%s: PARAM %d EXCEEDS %d BYTES (USE A BLOB)",
+                     fn, i, FB_MAX_PARAM_LEN);
+            return false;
+        }
+    }
+    return true;
+}
+
 FBConnect::FBConnect (const char * banco, const char * user, const char * senha, const char * charset)
 {
     this->TPB_RO       = NULL; 
@@ -194,18 +207,20 @@ int FBConnect::connectInternal (void)
 
     ThrowStatusWrapper status(this->STATUS);
 
-    IXpbBuilder* dpb = NULL;
-    dpb = this->UTIL->getXpbBuilder (&status, IXpbBuilder::DPB, NULL, 0);
-    
-    dpb->insertString (&status, isc_dpb_user_name, this->dbUser.c_str());
-    dpb->insertString (&status, isc_dpb_password, this->dbPass.c_str());
-    if (!this->dbCharset.empty()) {
-        dpb->insertString (&status, isc_dpb_lc_ctype, this->dbCharset.c_str());
-    }
-    dpb->insertString (&status, isc_dpb_set_bind,
-                       "INT128 TO VARCHAR; DECFLOAT TO VARCHAR; TIME ZONE TO VARCHAR");
+    IXpbBuilder  *dpb    = NULL;
+    ITransaction *initTr = NULL;
 
-    try { 
+    try {
+        dpb = this->UTIL->getXpbBuilder (&status, IXpbBuilder::DPB, NULL, 0);
+
+        dpb->insertString (&status, isc_dpb_user_name, this->dbUser.c_str());
+        dpb->insertString (&status, isc_dpb_password, this->dbPass.c_str());
+        if (!this->dbCharset.empty()) {
+            dpb->insertString (&status, isc_dpb_lc_ctype, this->dbCharset.c_str());
+        }
+        dpb->insertString (&status, isc_dpb_set_bind,
+                           "INT128 TO VARCHAR; DECFLOAT TO VARCHAR; TIME ZONE TO VARCHAR");
+
         this->ATTATCHMENT = this->PROVIDER->attachDatabase (&status, 
                                                             this->dbPath.c_str(), 
                                                             dpb->getBufferLength(&status),
@@ -228,25 +243,33 @@ int FBConnect::connectInternal (void)
         this->TPB_RW->insertTag (&status, isc_tpb_write);
 
         // Configura sessao Firebird 5.x para converter tipos estendidos (INT128, DECFLOAT, TIME ZONE)
-        ITransaction* initTr = this->ATTATCHMENT->startTransaction(&status,
+        initTr = this->ATTATCHMENT->startTransaction(&status,
                                    this->TPB_RW->getBufferLength(&status),
                                    this->TPB_RW->getBuffer(&status));
         this->ATTATCHMENT->execute(&status, initTr, 0, "SET BIND OF INT128 TO VARCHAR", SAMPLES_DIALECT, NULL, NULL, NULL, NULL);
         this->ATTATCHMENT->execute(&status, initTr, 0, "SET BIND OF DECFLOAT TO VARCHAR", SAMPLES_DIALECT, NULL, NULL, NULL, NULL);
         this->ATTATCHMENT->execute(&status, initTr, 0, "SET BIND OF TIME ZONE TO VARCHAR", SAMPLES_DIALECT, NULL, NULL, NULL, NULL);
         initTr->commit(&status);
+        initTr = NULL;
 
         this->Connected = true;
         this->Status    = OK;
         return 0;
     }
-    catch (const FbException& error) {                                                                                                                                         
-        char buf[354];                                                                                                                            
-        
-        this->UTIL->formatStatus (buf, sizeof(buf), error.getStatus());                                                                                   
-        snprintf (this->ErrorMsg, sizeof(this->ErrorMsg), "%s\n", buf);                                                                                                             
-        
-        if (dpb)               dpb->dispose(); 
+    catch (const FbException& error) {
+        char buf[354];
+
+        this->UTIL->formatStatus (buf, sizeof(buf), error.getStatus());
+        snprintf (this->ErrorMsg, sizeof(this->ErrorMsg), "%s\n", buf);
+
+        if (initTr) {
+            // A TRANSACAO INICIAL FICOU ABERTA: DESFAZ E LIBERA ANTES DO DETACH
+            CheckStatusWrapper st2(this->STATUS);
+            initTr->rollback(&st2);
+            if (st2.getState() & IStatus::STATE_ERRORS) initTr->release();
+            initTr = NULL;
+        }
+        if (dpb)               dpb->dispose();
         this->Connected = false;
         this->Status    = NOTOK;
         if (this->TPB_RO)      this->TPB_RO->dispose();
@@ -657,19 +680,8 @@ int FBConnect::Rollback        (void)
 int FBConnect::getSize ()
 {
     if (! this->InTrans || this->TRANSACTION == 0L || ! this->BufferData || ! this->FBCol) return -1;
- 
-    ThrowStatusWrapper status(this->STATUS);
 
-    if (this->blob) {
-        this->blob->close(&status);
-        this->blob = NULL;
-    }
-
-    this->blob = this->ATTATCHMENT->openBlob(&status, this->TRANSACTION, (ISC_QUAD*)(this->BufferData), 0, NULL);
-
-    this->BlobNumChar = this->getBlobSize(this->blob);
-
-    return this->BufferSize;
+    return (int)this->BufferSize;
 }
 
 /* PUBLIC: GETCOLUMN
@@ -715,10 +727,12 @@ string FBConnect::getColumn(int tam, int col)
     ISC_QUAD bid;
     memset(&bid, 0, sizeof(bid));
 
-    string fc_a;	
+    string fc_a;
     ISC_INT64 value = 0;
     unsigned char *colPtr = this->BufferData + this->FBCol[col].offset;
 
+    // getScale/openBlob/close LANCAM FbException: NAO DEIXA ESCAPAR PARA O CHAMADOR
+    try {
     switch (t)
     {
         case SQL_VARYING:
@@ -828,7 +842,16 @@ string FBConnect::getColumn(int tam, int col)
 
         default:
             break;
-    }		
+    }
+    }
+    catch (const FbException &error) {
+        this->UTIL->formatStatus(this->ErrorMsg, sizeof(this->ErrorMsg), error.getStatus());
+        if (this->blob) {
+            this->blob->release();
+            this->blob = NULL;
+        }
+        return "-1";
+    }
 
     if ((t == SQL_INT64 || t == SQL_LONG || t == SQL_SHORT) && dscale < 0 && dscale >= -18) {
         int fracDigits = -dscale;
@@ -926,7 +949,7 @@ map<string, string> FBConnect::getRowMap(void)
 /* PUBLIC: GETROW
 ** COPY FROM BUFFER TO USER VAR
 */
-int FBConnect::getRow (unsigned char *dados)
+int FBConnect::getRow (unsigned char *dados, size_t bufSize)
 {
     if (! this->InTrans    ||   this->TRANSACTION == 0L) return -1;
     if (! this->BufferData || ! this->BufferSize)        return -1;
@@ -937,10 +960,18 @@ int FBConnect::getRow (unsigned char *dados)
         if (j > 0) line += " | ";
         line += this->getColumn((int)j);
     }
-    if (dados) {
-        strcpy((char *)dados, line.c_str());
+    if (dados && bufSize > 0) {
+        size_t n = line.size() < bufSize - 1 ? line.size() : bufSize - 1;
+        memcpy(dados, line.data(), n);
+        dados[n] = '\0';
     }
     return 0;
+}
+
+// LEGADO: SEM TAMANHO DO BUFFER NAO HA COMO PROTEGER CONTRA ESTOURO
+int FBConnect::getRow (unsigned char *dados)
+{
+    return this->getRow(dados, dados ? (size_t)-1 : 0);
 }
 
 /* PUBLIC : SELECT
@@ -948,10 +979,11 @@ int FBConnect::getRow (unsigned char *dados)
 */
 int FBConnect::Select (const char *stmt)
 {
-    if (!stmt || strlen (stmt) < 15) { 
-        snprintf (this->ErrorMsg, sizeof(this->ErrorMsg), "FBConnect::Select: VERIFY STATMENT LESS THAN 15 CHARS");
+    if (!stmt || stmt[0] == '\0') {
+        snprintf (this->ErrorMsg, sizeof(this->ErrorMsg), "FBConnect::Select: EMPTY STATEMENT");
         return -1;
     }
+    this->ErrorMsg[0] = '\0';
 
     char txMode = isDmlReturningStmt(stmt) ? FBWRITE : FBREAD;
     if (! this->InTrans && this->Start (txMode)) return -1;
@@ -973,10 +1005,11 @@ int FBConnect::Select (const char *stmt)
 */
 int FBConnect::SelectBind (const char *stmt, const char **dados, int dimensao)
 {
-    if (!stmt || strlen(stmt) < 15 || !dados || dimensao <= 0) {
+    if (!stmt || stmt[0] == '\0' || !dados || dimensao <= 0) {
         snprintf(this->ErrorMsg, sizeof(this->ErrorMsg), "FBConnect::SelectBind: INVALID ARGUMENTS");
         return -1;
     }
+    if (!paramsWithinLimit(dados, dimensao, "SelectBind", this->ErrorMsg, sizeof(this->ErrorMsg))) return -1;
 
     char txMode = isDmlReturningStmt(stmt) ? FBWRITE : FBREAD;
     if (!this->InTrans && this->Start(txMode)) return -1;
@@ -1180,6 +1213,7 @@ int FBConnect::ExecuteBind (const char *stmt, const char **dados, int dimensao)
         snprintf(this->ErrorMsg, sizeof(this->ErrorMsg), "FBConnect::ExecuteBind: INVALID ARGUMENTS");
         return -1;
     }
+    if (!paramsWithinLimit(dados, dimensao, "ExecuteBind", this->ErrorMsg, sizeof(this->ErrorMsg))) return -1;
 
     if (!this->InTrans && this->Start(FBWRITE)) return -1;
 
@@ -1261,6 +1295,32 @@ int FBConnect::ExecuteBind (const char *stmt, char **dados, int dimensao)
 
 int FBConnect::ExecuteBatch (const char *stmt, const vector<vector<string>> &rows)
 {
+    vector<vector<FBBatchCell>> cells(rows.size());
+    for (size_t r = 0; r < rows.size(); ++r) {
+        cells[r].reserve(rows[r].size());
+        for (size_t i = 0; i < rows[r].size(); ++i) {
+            FBBatchCell c = { rows[r][i].data(), rows[r][i].size() };
+            cells[r].push_back(c);
+        }
+    }
+    return this->executeBatchCells(stmt, cells);
+}
+
+int FBConnect::ExecuteBatch (const char *stmt, const vector<vector<const char*>> &rows)
+{
+    vector<vector<FBBatchCell>> cells(rows.size());
+    for (size_t r = 0; r < rows.size(); ++r) {
+        cells[r].reserve(rows[r].size());
+        for (size_t i = 0; i < rows[r].size(); ++i) {
+            FBBatchCell c = { rows[r][i], rows[r][i] ? strlen(rows[r][i]) : 0 };
+            cells[r].push_back(c);
+        }
+    }
+    return this->executeBatchCells(stmt, cells);
+}
+
+int FBConnect::executeBatchCells (const char *stmt, const vector<vector<FBBatchCell>> &rows)
+{
     if (!stmt || strlen(stmt) == 0 || rows.empty()) {
         snprintf(this->ErrorMsg, sizeof(this->ErrorMsg), "FBConnect::ExecuteBatch: INVALID ARGUMENTS");
         return -1;
@@ -1297,8 +1357,17 @@ int FBConnect::ExecuteBatch (const char *stmt, const vector<vector<string>> &row
                 return -1;
             }
             for (unsigned i = 0; i < paramCount; ++i) {
-                if (rows[r][i].size() > maxLens[i]) {
-                    maxLens[i] = (unsigned)rows[r][i].size();
+                size_t len = rows[r][i].data ? rows[r][i].len : 0;
+                if (len > FB_MAX_PARAM_LEN) {
+                    snprintf(this->ErrorMsg, sizeof(this->ErrorMsg),
+                             "FBConnect::ExecuteBatch: ROW %zu PARAM %u EXCEEDS %d BYTES (USE A BLOB)",
+                             r, i, FB_MAX_PARAM_LEN);
+                    inMeta->release();
+                    stmtObj->free(&status);
+                    return -1;
+                }
+                if (len > maxLens[i]) {
+                    maxLens[i] = (unsigned)len;
                 }
             }
         }
@@ -1323,11 +1392,15 @@ int FBConnect::ExecuteBatch (const char *stmt, const vector<vector<string>> &row
             for (unsigned i = 0; i < paramCount; ++i) {
                 unsigned offset     = inMeta->getOffset(&status, i);
                 unsigned nullOffset = inMeta->getNullOffset(&status, i);
+                if (rows[r][i].data == NULL) {
+                    *(ISC_SHORT *)(inBuf + nullOffset) = -1;
+                    continue;
+                }
                 *(ISC_SHORT *)(inBuf + nullOffset) = 0;
-                uint16_t len = (uint16_t)rows[r][i].size();
+                uint16_t len = (uint16_t)rows[r][i].len;
                 *(uint16_t *)(inBuf + offset) = len;
                 if (len > 0) {
-                    memcpy(inBuf + offset + sizeof(uint16_t), rows[r][i].data(), len);
+                    memcpy(inBuf + offset + sizeof(uint16_t), rows[r][i].data, len);
                 }
             }
             stmtObj->execute(&status, this->TRANSACTION, inMeta, inBuf, NULL, NULL);
@@ -1390,14 +1463,28 @@ string FBConnect::GetTextBlob ()
     return d;
 }
 
-int FBConnect::GetTextBlob (unsigned char *buf)
+// COPIA O BLOB PARA buf (ATE bufSize-1 BYTES + '\0'). RETORNA OS BYTES COPIADOS;
+// SE O BLOB FOR MAIOR QUE O BUFFER, O CONTEUDO E TRUNCADO E ErrorMsg E PREENCHIDO
+int FBConnect::GetTextBlob (unsigned char *buf, size_t bufSize)
 {
-    if (!buf) return -1;
+    if (!buf || bufSize == 0) return -1;
     string s = this->GetTextBlob();
     if (s == "Error") return -1;
-    memcpy(buf, s.data(), s.size());
-    buf[s.size()] = '\0';
-    return (int)s.size();
+    size_t n = s.size();
+    if (n > bufSize - 1) {
+        n = bufSize - 1;
+        snprintf(this->ErrorMsg, sizeof(this->ErrorMsg),
+                 "FBConnect::GetTextBlob: BLOB TRUNCATED (%zu OF %zu BYTES)", n, s.size());
+    }
+    memcpy(buf, s.data(), n);
+    buf[n] = '\0';
+    return (int)n;
+}
+
+// LEGADO: SEM TAMANHO DO BUFFER NAO HA COMO PROTEGER CONTRA ESTOURO
+int FBConnect::GetTextBlob (unsigned char *buf)
+{
+    return this->GetTextBlob(buf, buf ? (size_t)-1 : 0);
 }
 
 int FBConnect::GetFileBlob (FILE *file)
@@ -1601,7 +1688,14 @@ int FBConnect:: getBlobSize(IBlob * handler)
         isc_info_blob_total_length};
 
         ThrowStatusWrapper status(this->STATUS);
-        handler->getInfo(&status, 2, items, sizeof(bbchar), bbchar );
+        try {
+            handler->getInfo(&status, 2, items, sizeof(bbchar), bbchar );
+        }
+        catch (const FbException &error) {
+            this->UTIL->formatStatus(this->ErrorMsg, sizeof(this->ErrorMsg), error.getStatus());
+            this->BlobNumChar = 0;
+            return -1;
+        }
 
 	ISC_LONG max_size = 0L;
         ISC_LONG num_segments = 0L;
@@ -1612,10 +1706,13 @@ int FBConnect:: getBlobSize(IBlob * handler)
         short length;
 	this->BlobNumChar = 0;
 
-        for (p = bbchar; *p != isc_info_end ;) {
+        // LIMITA A LEITURA AO BUFFER: UM BLOCO MAL FORMADO NAO PODE LEVAR ALEM DE bbchar
+        for (p = bbchar; p + 3 <= bbchar + sizeof(bbchar) && *p != isc_info_end ;) {
                item = *p++;
+               if (item == isc_info_truncated) break;
                length = (short)isc_portable_integer(p, 2);
                p += 2;
+               if (length < 0 || p + length > bbchar + sizeof(bbchar)) break;
                switch (item) {
                        case isc_info_blob_max_segment:
                                max_size = isc_portable_integer(p, length);

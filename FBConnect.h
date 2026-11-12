@@ -49,7 +49,7 @@ using namespace std;
 
 // Firebird 5.x SQL Data Type & DPB Constants
 #ifndef isc_dpb_set_bind
-#define isc_dpb_set_bind     89
+#define isc_dpb_set_bind     93
 #endif
 #ifndef SQL_BOOLEAN
 #define SQL_BOOLEAN          32764
@@ -77,6 +77,7 @@ using namespace std;
 #endif
 
 #define FB_BLOB_SEGMENT_SIZE 4096
+#define FB_MAX_PARAM_LEN     32765   // MAIOR VARCHAR/CHAR ACEITO COMO PARAMETRO (BYTES)
 
 typedef struct fbcol {
     
@@ -90,6 +91,12 @@ typedef struct fbcol {
 
 
 class FBEventCallback;
+
+// CELULA DE ExecuteBatch: data == NULL GRAVA SQL NULL
+struct FBBatchCell {
+    const char *data;
+    size_t      len;
+};
 
 class FBConnect
 {
@@ -114,6 +121,7 @@ int setupOutputMetadata (IStatus *status);
 void closeQueryResources (IStatus *status);
 void cancelActiveEvents (void);
 int connectInternal (void);
+int executeBatchCells (const char *stmt, const vector<vector<FBBatchCell>> &rows);
 
 string          dbPath;
 string          dbUser;
@@ -168,6 +176,8 @@ bool            isFetchOK;
 IBlob*          blob;
 string GetTextBlob ();
 
+int  GetTextBlob    (unsigned char *buf, size_t bufSize);   // COPIA ATE bufSize-1 BYTES + '\0'
+[[deprecated("use GetTextBlob(buf, bufSize)")]]
 int  GetTextBlob    (unsigned char *); 
 int  GetFileBlob    (FILE *blob);
 int  SetTextBlob    (const char *query, const char *texto, int bloblen);
@@ -202,6 +212,8 @@ bool    getBool  (const char *colName);
 
 vector<string>      getRowVector(void);
 map<string, string> getRowMap   (void);
+int getRow          (unsigned char *dados, size_t bufSize);  // COPIA ATE bufSize-1 BYTES + '\0'
+[[deprecated("use getRow(dados, bufSize)")]]
 int getRow          (unsigned char *);
 int Fetch           (void);
 int getSize         (void);
@@ -213,6 +225,7 @@ int Execute         (const char *stmt);                                     // E
 int ExecuteBind     (const char *stmt, const char **dados, int dimensao);   // EXECUTE WITH PARAMETERS
 int ExecuteBind     (const char *stmt, char **dados, int dimensao);         // EXECUTE WITH PARAMETERS
 int ExecuteBatch    (const char *stmt, const vector<vector<string>> &rows); // BATCH EXECUTION
+int ExecuteBatch    (const char *stmt, const vector<vector<const char*>> &rows); // BATCH, NULL PTR = SQL NULL
 int getBlobSize(IBlob *); 
 }; //FBConnect
 

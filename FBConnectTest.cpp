@@ -9,6 +9,7 @@
 //            ./FBConnectTest --batch  (MODO NAO-INTERATIVO PARA SCRIPTS/CI)
 
 #include "FBConnect.h"
+#include "FBConnectEnv.h"
 #include "MauWin.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,9 +24,10 @@
 
 #define S(x) ((char*)(x))
 
-#define FB30PATH "127.0.0.1:/var/lib/firebird/data/mautec.fdb"
-#define FB30PASS "pqIobXtPui94hw9"
-#define FB30USER "softgo"
+// CONEXAO VEM DO AMBIENTE (FBCONNECT_DB / FBCONNECT_USER / FBCONNECT_PASS)
+#define FB30PATH FBENV_DB
+#define FB30PASS FBENV_PASS
+#define FB30USER FBENV_USER
 
 using namespace std;
 
@@ -422,7 +424,7 @@ int t006_Select( void )
 
 int t007_SelectA( void )
 {
-    relLog( "007_SelectA: Validacao de comando SQL incompleto (< 15 chars)" );
+    relLog( "007_SelectA: Validacao de comando SQL incompleto (rejeitado pelo servidor)" );
     FBConnect *db = new FBConnect( FB30PATH, FB30USER, FB30PASS );
     if ( !db->Connected ) {
         relLog( "ERRO CONEXAO: %s", db->ErrorMsg );
@@ -761,7 +763,7 @@ int t014_Events( void )
 {
     relLog( "014_Events: Eventos nativos do Firebird 5.0 (OO API: queEvents/IEvents)" );
     // Tenta primeiro na conexao padrao; se o NAT do Docker bloquear a porta auxiliar
-    // em 127.0.0.1, conecta pelo IP da bridge do container (172.18.0.3)
+    // em 127.0.0.1, conecta pelo IP da bridge do container (FBCONNECT_DB_AUX)
     FBConnect *db = new FBConnect( FB30PATH, FB30USER, FB30PASS );
     if ( !db->Connected ) {
         relLog( "ERRO CONEXAO: %s", db->ErrorMsg );
@@ -774,11 +776,11 @@ int t014_Events( void )
 
     if ( db->EventInit( listaEventos, meuCallbackEvento ) != 0 ) {
         relLog( "Aviso em 127.0.0.1: %s", db->ErrorMsg );
-        relLog( "Tentando via bridge Docker 172.18.0.3..." );
+        relLog( "Tentando via bridge Docker %s...", FBENV_DB_AUX );
         delete db;
-        db = new FBConnect( "172.18.0.3:/var/lib/firebird/data/mautec.fdb", FB30USER, FB30PASS );
+        db = new FBConnect( FBENV_DB_AUX, FB30USER, FB30PASS );
         if ( !db->Connected || db->EventInit( listaEventos, meuCallbackEvento ) != 0 ) {
-            relLog( "Aviso em 172.18.0.3: %s", db->ErrorMsg );
+            relLog( "Aviso em %s: %s", FBENV_DB_AUX, db->ErrorMsg );
             // Se o container Docker expoe apenas a porta 3050 no host (sem RemoteAuxPort mapeado),
             // validamos PostEvent() e o ciclo completo dos metodos da classe:
             delete db;
@@ -849,6 +851,93 @@ int t014_Events( void )
     return 0;
 }
 
+// t015: NULL NO ExecuteBatch, LIMITE DE TAMANHO DOS PARAMETROS, getRow/GetTextBlob
+// COM TAMANHO DE BUFFER E getSize SEM EFEITO COLATERAL. TUDO EM UMA TRANSACAO
+// DESFEITA NO FINAL, PARA NAO ALTERAR OS DADOS DO SEED.
+#define T015_FALHA( ... ) do { relLog( __VA_ARGS__ ); relLog( "ErrorMsg: %s", db->ErrorMsg ); \
+                               db->Rollback(); delete db; return 1; } while ( 0 )
+
+int t015_RobustezBuffersENull( void )
+{
+    relLog( "015_RobustezBuffersENull: NULL em lote, limites de parametro e buffers" );
+    FBConnect *db = new FBConnect( FB30PATH, FB30USER, FB30PASS );
+    if ( !db->Connected ) {
+        relLog( "ERRO CONEXAO: %s", db->ErrorMsg );
+        delete db;
+        return 1;
+    }
+    db->Start( FBWRITE );
+
+    // 1) ExecuteBatch COM PONTEIRO NULL -> SQL NULL
+    vector<vector<const char*>> lote = {
+        { "4001", "Lote Com Nulo", NULL,    "Souza", NULL },
+        { "4002", "Lote Completo", "Paula", "Reis",  "Campinas" }
+    };
+    int n = db->ExecuteBatch(
+        "INSERT INTO CUSTOMER (CUST_NO, CUSTOMER, CONTACT_FIRST, CONTACT_LAST, CITY) VALUES (?, ?, ?, ?, ?)",
+        lote );
+    if ( n != 2 || db->getAffectedRows() != 2 ) T015_FALHA( "ERRO ExecuteBatch(NULL): retornou %d", n );
+
+    if ( db->Select( "SELECT CUST_NO, CONTACT_FIRST, CITY FROM CUSTOMER WHERE CUST_NO IN (4001, 4002) ORDER BY CUST_NO" ) != 0 )
+        T015_FALHA( "ERRO SELECT do lote" );
+    if ( db->Fetch() != 0 || db->getInt( "CUST_NO" ) != 4001 ||
+         !db->isNull( "CONTACT_FIRST" ) || !db->isNull( "CITY" ) )
+        T015_FALHA( "ERRO: 4001 deveria ter CONTACT_FIRST e CITY nulos" );
+    if ( db->Fetch() != 0 || db->getInt( "CUST_NO" ) != 4002 ||
+         db->isNull( "CONTACT_FIRST" ) || db->getColumn( "CITY" ) != "Campinas" )
+        T015_FALHA( "ERRO: 4002 deveria ter todos os campos preenchidos" );
+    relLog( "1) ExecuteBatch com NULL: 4001 com nulos, 4002 completo" );
+
+    // 2) PARAMETRO ACIMA DE FB_MAX_PARAM_LEN E RECUSADO COM ERRO CLARO
+    string grande( FB_MAX_PARAM_LEN + 1, 'x' );
+    vector<vector<string>> loteGrande = { { "4003", grande } };
+    if ( db->ExecuteBatch( "INSERT INTO CUSTOMER (CUST_NO, CUSTOMER) VALUES (?, ?)", loteGrande ) != -1 ||
+         !strstr( db->ErrorMsg, "EXCEEDS" ) )
+        T015_FALHA( "ERRO: ExecuteBatch deveria recusar parametro de %zu bytes", grande.size() );
+    const char *paramsGrandes[] = { grande.c_str() };
+    if ( db->ExecuteBind( "UPDATE CUSTOMER SET CITY = ? WHERE CUST_NO = 4001", paramsGrandes, 1 ) != -1 ||
+         !strstr( db->ErrorMsg, "EXCEEDS" ) )
+        T015_FALHA( "ERRO: ExecuteBind deveria recusar parametro grande" );
+    if ( db->SelectBind( "SELECT CUST_NO FROM CUSTOMER WHERE CITY = ?", paramsGrandes, 1 ) != -1 ||
+         !strstr( db->ErrorMsg, "EXCEEDS" ) )
+        T015_FALHA( "ERRO: SelectBind deveria recusar parametro grande" );
+    relLog( "2) Parametro de %zu bytes recusado por ExecuteBatch, ExecuteBind e SelectBind", grande.size() );
+
+    // 3) getRow COM BUFFER PEQUENO: TRUNCA E NAO ESCREVE ALEM DO LIMITE
+    unsigned char linha[16];
+    memset( linha, '#', sizeof( linha ) );
+    if ( db->Select( "SELECT CUST_NO, CUSTOMER FROM CUSTOMER WHERE CUST_NO = 4002" ) != 0 || db->Fetch() != 0 )
+        T015_FALHA( "ERRO SELECT 4002" );
+    if ( db->getRow( linha, 8 ) != 0 || linha[7] != '\0' || strlen( (char*)linha ) != 7 ||
+         memcmp( linha, "4002 | ", 7 ) != 0 || linha[8] != '#' || linha[15] != '#' )
+        T015_FALHA( "ERRO getRow(buf, 8): esperado '4002 | ' truncado sem estouro" );
+    relLog( "3) getRow(buf, 8) truncou para '%s' sem escrever alem do buffer", (char*)linha );
+
+    // 4) getSize NAO ABRE BLOB; GetTextBlob(buf, n) TRUNCA E AVISA
+    if ( db->Select( "SELECT PROJ_DESC FROM PROJECT WHERE PROJ_ID = 'QAAUT'" ) != 0 || db->Fetch() != 0 )
+        T015_FALHA( "ERRO SELECT QAAUT" );
+    if ( db->getSize() <= 0 || db->blob != NULL )
+        T015_FALHA( "ERRO: getSize deveria retornar o tamanho do buffer sem abrir BLOB" );
+    db->getColumn( 0 );
+    string completo = db->GetTextBlob();
+    if ( completo.size() < 10 ) T015_FALHA( "ERRO: BLOB QAAUT curto demais (%zu)", completo.size() );
+
+    unsigned char blobBuf[16];
+    memset( blobBuf, '#', sizeof( blobBuf ) );
+    db->getColumn( 0 );   // REABRE O BLOB
+    db->ErrorMsg[0] = '\0';
+    int lidos = db->GetTextBlob( blobBuf, 10 );
+    if ( lidos != 9 || blobBuf[9] != '\0' || blobBuf[10] != '#' ||
+         memcmp( blobBuf, completo.data(), 9 ) != 0 || !strstr( db->ErrorMsg, "TRUNCATED" ) )
+        T015_FALHA( "ERRO GetTextBlob(buf, 10): retornou %d", lidos );
+    relLog( "4) getSize sem efeito colateral; GetTextBlob(buf, 10) truncou %zu bytes para 9", completo.size() );
+
+    db->Rollback();
+    relLog( "5) Rollback: dados do seed preservados" );
+    delete db;
+    return 0;
+}
+
 // ===========================================================================
 // TABELA DE DESCRICAO DOS TESTES E INTERFACE MauWin
 // ===========================================================================
@@ -874,6 +963,7 @@ static const CasoTeste g_testes[] = {
     { "t012", "t012 - ExecuteBind (?) e SetTextBlob (Escrita BLOB)",t012_ExecuteBindAndBlobWrite},
     { "t013", "t013 - NewUtilities (Ping, Seq, Batch, RETURNING)",  t013_NewUtilities          },
     { "t014", "t014 - Events (EventInit, EventWait, EventCounts)",  t014_Events                },
+    { "t015", "t015 - Robustez (NULL em lote, limites, buffers)",   t015_RobustezBuffersENull  },
 };
 static const int QTD_TESTES = sizeof( g_testes ) / sizeof( g_testes[0] );
 
@@ -990,6 +1080,8 @@ static int modoBatch( void )
 
 int main( int argc, char *argv[] )
 {
+    if ( !fbEnvOk() ) return 2;
+
     for ( int i = 1; i < argc; ++i ) {
         if ( strcmp( argv[i], "--batch" ) == 0 || strcmp( argv[i], "-b" ) == 0 ) {
             return modoBatch();

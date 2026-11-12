@@ -12,6 +12,7 @@
 //
 // COMPILAR:  make exemploFBConnect
 // RODAR:     ./exemploFBConnect        (TERMINAL DE PELO MENOS 24x80)
+// CONEXAO:   FBCONNECT_USER / FBCONNECT_PASS (E OPCIONAL FBCONNECT_DB) NO AMBIENTE
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,12 +26,14 @@
 #include <ncurses.h>
 #include "MauWin.h"
 #include "FBConnect.h"
+#include "FBConnectEnv.h"
 
 #define S(x) ((char*)(x))
 
-#define FB_PATH "127.0.0.1:/var/lib/firebird/data/mautec.fdb"
-#define FB_USER "softgo"
-#define FB_PASS "pqIobXtPui94hw9"
+// CONEXAO VEM DO AMBIENTE (FBCONNECT_DB / FBCONNECT_USER / FBCONNECT_PASS)
+#define FB_PATH FBENV_DB
+#define FB_USER FBENV_USER
+#define FB_PASS FBENV_PASS
 
 // CAMPOS DA BARRA DE STATUS SUPERIOR
 enum {
@@ -684,14 +687,14 @@ static void telaEventosFirebird5( MauWin &status, FBConnect &db )
     std::vector<std::string> nomes = { "EVT_PEDIDO", "EVT_ALERTA" };
 
     // Se a conexao padrao em 127.0.0.1 tiver a porta auxiliar bloqueada pelo NAT do Docker,
-    // tenta abrir conexao dedicada para eventos na bridge do container (172.18.0.3)
+    // tenta abrir conexao dedicada para eventos na bridge do container (FBCONNECT_DB_AUX)
     FBConnect *evDb = &db;
     FBConnect *auxDb = NULL;
     bool escutaAtiva = false;
     if ( evDb->EventInit( nomes ) == 0 ) {
         escutaAtiva = true;
     } else {
-        auxDb = new FBConnect( "172.18.0.3:/var/lib/firebird/data/mautec.fdb", FB_USER, FB_PASS );
+        auxDb = new FBConnect( FBENV_DB_AUX, FB_USER, FB_PASS );
         if ( auxDb->Connected && auxDb->EventInit( nomes ) == 0 ) {
             evDb = auxDb;
             escutaAtiva = true;
@@ -780,6 +783,8 @@ static void telaEventosFirebird5( MauWin &status, FBConnect &db )
 // ---------------------------------------------------------------------------
 int main( void )
 {
+    if ( !fbEnvOk() ) return 2;
+
     // 1. CONECTA AO FIREBIRD 5.0 ANTES DE INICIAR A TELA
     FBConnect db( FB_PATH, FB_USER, FB_PASS );
     if ( !db.Connected ) {
